@@ -22,8 +22,11 @@ pnpm db:generate
 pnpm db:push
 pnpm db:seed
 pnpm test
+pnpm build
 pnpm dev
 ```
+
+如果 `package.json` 有依赖变化，先重新执行 `pnpm install`，再运行 Prisma 和 build 命令。
 
 打开：
 

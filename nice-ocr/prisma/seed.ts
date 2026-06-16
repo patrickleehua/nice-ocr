@@ -1,6 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "../src/lib/db/client";
 
 async function main() {
   await prisma.productConflict.deleteMany();
