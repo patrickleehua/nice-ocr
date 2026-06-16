@@ -21,6 +21,7 @@ copy .env.example .env
 pnpm db:generate
 pnpm db:push
 pnpm db:seed
+pnpm test
 pnpm dev
 ```
 
