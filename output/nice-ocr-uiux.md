@@ -4,6 +4,17 @@
 > Status: draft for confirmation  
 > Date: 2026-06-16
 
+## 0. Confirmed Visual Reference
+
+The user supplied `output/uiux.png` after approving the core documents. Treat this image as the visual reference for implementation:
+
+- Overall tone: clean enterprise operations dashboard, dense but readable.
+- Navigation: dark left sidebar with grouped app sections.
+- Main pages: dashboard, batches list, batch detail, results list, review workbench, products/conflicts, import/settings, login/error states.
+- Interaction model: right-side drawers/dialogs for create batch, edit row, confirm/cancel, and risk details.
+- Components: compact metric cards, filter bars, paginated tables, status badges, split review workbench, thumbnails, form dialogs, loading/empty/error states.
+- Implementation must still follow Super Dev constraints: Lucide icons only, no emoji, no purple/pink gradient theme, no marketing landing page.
+
 ## 1. Design Direction
 
 nice-ocr should feel like a focused operations tool for people who process many documents repeatedly. It should be dense, calm, readable, and fast to scan.

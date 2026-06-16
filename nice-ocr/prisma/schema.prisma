@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Batch {
+  id               String           @id @default(cuid())
+  name             String
+  notes            String?
+  status           String           @default("draft")
+  strategy         String           @default("balanced")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  documents        Document[]
+  jobs             RecognitionJob[]
+  rows             RecognitionRow[]
+  exports          ExportRecord[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Document {
+  id              String              @id @default(cuid())
+  batchId         String
+  batch           Batch               @relation(fields: [batchId], references: [id])
+  originalName    String
+  storedPath      String
+  thumbnailPath   String?
+  hash            String
+  mimeType        String
+  sizeBytes       Int
+  width           Int?
+  height          Int?
+  status          String              @default("uploaded")
+  reviewStatus    String              @default("pending")
+  tag             String?
+  riskLevel       String              @default("low")
+  riskReasonsJson String              @default("[]")
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  jobs            RecognitionJob[]
+  attempts        ExtractionAttempt[]
+  rows            RecognitionRow[]
+
+  @@unique([hash, batchId])
+  @@index([batchId, status])
+  @@index([riskLevel])
+}
+
+model RecognitionJob {
+  id           String              @id @default(cuid())
+  batchId      String
+  documentId   String
+  batch        Batch               @relation(fields: [batchId], references: [id])
+  document     Document            @relation(fields: [documentId], references: [id])
+  type         String              @default("extract")
+  status       String              @default("queued")
+  priority     Int                 @default(100)
+  attemptsMade Int                 @default(0)
+  maxAttempts  Int                 @default(3)
+  nextRunAt    DateTime            @default(now())
+  lockedAt     DateTime?
+  lockedBy     String?
+  lastError    String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  attempts     ExtractionAttempt[]
+
+  @@index([status, nextRunAt, priority])
+  @@index([documentId])
+}
+
+model ExtractionAttempt {
+  id              String         @id @default(cuid())
+  documentId      String
+  jobId           String?
+  document        Document       @relation(fields: [documentId], references: [id])
+  job             RecognitionJob? @relation(fields: [jobId], references: [id])
+  providerKey     String
+  model           String
+  promptVersion   String
+  schemaVersion   String
+  strategy        String
+  status          String
+  rawOutputPath   String?
+  parsedJson      String?
+  validationJson  String?
+  tokenUsageJson  String?
+  costEstimate    Float?
+  latencyMs       Int?
+  startedAt       DateTime       @default(now())
+  completedAt     DateTime?
+  error           String?
+  rows            RecognitionRow[]
+
+  @@index([documentId, status])
+  @@index([providerKey, model])
+}
+
+model RecognitionRow {
+  id                String             @id @default(cuid())
+  batchId           String
+  documentId        String
+  canonicalAttemptId String?
+  batch             Batch              @relation(fields: [batchId], references: [id])
+  document          Document           @relation(fields: [documentId], references: [id])
+  canonicalAttempt  ExtractionAttempt? @relation(fields: [canonicalAttemptId], references: [id])
+  rowIndex          Int
+  rawDate           String?
+  normalizedMonth   String?
+  code              String?
+  name              String
+  unit              String?
+  qty               Float              @default(0)
+  price             Float              @default(0)
+  amount            Float              @default(0)
+  remark            String?
+  status            String             @default("pending")
+  riskLevel         String             @default("low")
+  riskReasonsJson   String             @default("[]")
+  conflictState     String             @default("none")
+  deletedAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  observations      ProductObservation[]
+
+  @@index([batchId, status])
+  @@index([documentId])
+  @@index([normalizedMonth])
+  @@index([code])
+  @@index([name])
+  @@index([riskLevel])
+}
+
+model ProductObservation {
+  id              String         @id @default(cuid())
+  rowId           String
+  batchId         String
+  documentId      String
+  row             RecognitionRow @relation(fields: [rowId], references: [id])
+  rawCode         String?
+  cleanCode       String?
+  name            String
+  unit            String?
+  qty             Float          @default(0)
+  normalizedMonth String?
+  createdAt       DateTime       @default(now())
+
+  @@index([cleanCode])
+  @@index([name])
+  @@index([batchId])
+}
+
+model Product {
+  id          String            @id @default(cuid())
+  code        String?
+  name        String
+  unit        String?
+  aliasesJson String           @default("[]")
+  status      String           @default("active")
+  remark      String?
+  firstSeenAt DateTime?
+  lastSeenAt  DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  conflicts   ProductConflict[]
+
+  @@index([code])
+  @@index([name])
+}
+
+model ProductConflict {
+  id              String    @id @default(cuid())
+  productId       String?
+  product         Product?  @relation(fields: [productId], references: [id])
+  type            String
+  severity        String
+  reason          String
+  sourceRowIdsJson String   @default("[]")
+  status          String    @default("open")
+  resolutionNote  String?
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  @@index([status, severity])
+  @@index([type])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  beforeJson String?
+  afterJson  String?
+  actor      String   @default("local")
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  valueJson String
+  updatedAt DateTime @updatedAt
+}
+
+model ExportRecord {
+  id         String   @id @default(cuid())
+  batchId    String?
+  batch      Batch?   @relation(fields: [batchId], references: [id])
+  type       String
+  filterJson String
+  filePath   String
+  rowCount   Int
+  createdAt  DateTime @default(now())
+
+  @@index([type, createdAt])
+}
