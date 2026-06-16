@@ -1,0 +1,50 @@
+author: 'patrick'
+backend: next
+cli: {}
+codex_review_enabled: false
+codex_review_phases:
+- drafting
+- redteam
+- qa
+database: sqlite
+description: ''
+design_inspiration_slug: ''
+domain: ''
+execution_mode: standard
+experts:
+- PM
+- ARCHITECT
+- UI
+- UX
+- SECURITY
+- CODE
+frontend: next
+host_compatibility_min_ready_hosts: 1
+host_compatibility_min_score: 80
+host_profile_enforce_selected: false
+host_profile_targets: []
+knowledge_allowed_domains: []
+knowledge_cache_ttl_seconds: 1800
+language_preferences: []
+license: MIT
+name: nice-ocr
+output_dir: output
+overseer_enabled: false
+overseer_halt_on_critical: true
+phases:
+- discovery
+- intelligence
+- drafting
+- redteam
+- qa
+- delivery
+- deployment
+plan_failure_budget: 3
+platform: web
+quality_gate: 80
+state_management:
+- react-query
+style_solution: tailwind
+testing_frameworks: []
+ui_library: shadcn-ui
+version: 2.4.0
