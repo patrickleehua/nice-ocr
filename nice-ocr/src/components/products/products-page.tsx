@@ -1,10 +1,49 @@
+"use client";
+
 import { Download, Eye, RefreshCw } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { products } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { apiGet } from "@/lib/api/client";
+import type { ProductItem } from "@/lib/types";
+
+type ApiProduct = {
+  id: string;
+  code?: string | null;
+  name: string;
+  unit?: string | null;
+  aliasesJson?: string;
+  conflicts?: Array<{ status: string; reason: string }>;
+  lastSeenAt?: string | null;
+  updatedAt?: string;
+};
+
+function toProductItem(product: ApiProduct): ProductItem {
+  const aliases = product.aliasesJson ? JSON.parse(product.aliasesJson) : [];
+  const openConflicts = product.conflicts?.filter((conflict) => conflict.status === "open") ?? [];
+  return {
+    id: product.id,
+    code: product.code ?? "",
+    name: product.name,
+    unit: product.unit ?? "",
+    aliases,
+    observationCount: 0,
+    sourceDocuments: 0,
+    conflict: openConflicts.length > 0,
+    conflictReason: openConflicts.map((conflict) => conflict.reason).join("；") || undefined,
+    lastSeenAt: product.lastSeenAt ?? product.updatedAt ?? "",
+  };
+}
 
 export function ProductsPage() {
+  const { data } = useQuery<{ products: ApiProduct[] }>({
+    queryKey: ["products"],
+    queryFn: () => apiGet("/api/products"),
+  });
+  const rows = data?.products?.map(toProductItem) ?? products;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -43,7 +82,7 @@ export function ProductsPage() {
             </tr>
           </thead>
           <tbody>
-            {products.map((product) => (
+            {rows.map((product) => (
               <tr key={product.id} className="hover:bg-muted/70">
                 <td className={tableCellClass}>{product.code || "-"}</td>
                 <td className={tableCellClass}>{product.name}</td>

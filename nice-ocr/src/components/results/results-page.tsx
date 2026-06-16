@@ -1,11 +1,80 @@
+"use client";
+
 import { Download, Edit3, Filter, MoreHorizontal, RotateCcw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { recognitionRows } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils";
+import { EditRowDrawer } from "@/components/dialogs/action-dialogs";
+import { apiGet, apiJson } from "@/lib/api/client";
+import type { RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
+
+type ApiRecognitionRow = {
+  id: string;
+  batchId: string;
+  documentId: string;
+  normalizedMonth?: string | null;
+  code?: string | null;
+  name: string;
+  unit?: string | null;
+  qty: number;
+  price: number;
+  amount: number;
+  remark?: string | null;
+  riskLevel: string;
+  status: string;
+  conflictState?: string | null;
+  riskReasonsJson?: string | null;
+  updatedAt: string;
+  batch?: { name: string };
+  document?: { originalName: string };
+};
+
+function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
+  return {
+    id: row.id,
+    batchId: row.batchId,
+    batchName: row.batch?.name ?? row.batchId,
+    documentId: row.documentId,
+    documentName: row.document?.originalName ?? row.documentId,
+    month: row.normalizedMonth ?? "",
+    code: row.code ?? "",
+    name: row.name,
+    unit: row.unit ?? "",
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    amount: Number(row.amount) || 0,
+    risk: row.riskLevel as RiskLevel,
+    status: row.status as RowStatus,
+    conflictReason:
+      row.conflictState && row.conflictState !== "none"
+        ? JSON.parse(row.riskReasonsJson || "[]").join("、")
+        : undefined,
+    remark: row.remark ?? "",
+    updatedAt: row.updatedAt,
+  };
+}
 
 export function ResultsPage() {
+  const [editing, setEditing] = useState<RecognitionRow | undefined>();
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ rows: ApiRecognitionRow[] }>({
+    queryKey: ["rows"],
+    queryFn: () => apiGet("/api/rows"),
+  });
+  const rows = data?.rows?.map(toRecognitionRow) ?? recognitionRows;
+  const updateRow = useMutation({
+    mutationFn: (payload: Partial<RecognitionRow>) =>
+      apiJson(`/api/rows/${editing?.id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+    onSuccess: () => {
+      setEditing(undefined);
+      queryClient.invalidateQueries({ queryKey: ["rows"] });
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -52,7 +121,7 @@ export function ResultsPage() {
             </tr>
           </thead>
           <tbody>
-            {recognitionRows.map((row, index) => (
+            {rows.map((row, index) => (
               <tr key={row.id} className="hover:bg-muted/70">
                 <td className={tableCellClass}>{index + 1}</td>
                 <td className={tableCellClass}>{row.batchName}</td>
@@ -69,7 +138,7 @@ export function ResultsPage() {
                 <td className={tableCellClass}>{row.conflictReason ?? "-"}</td>
                 <td className={tableCellClass}>
                   <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" aria-label="编辑行"><Edit3 size={15} /></Button>
+                    <Button size="icon" variant="ghost" aria-label="编辑行" onClick={() => setEditing(row)}><Edit3 size={15} /></Button>
                     <Button size="icon" variant="ghost" aria-label="更多操作"><MoreHorizontal size={15} /></Button>
                   </div>
                 </td>
@@ -88,6 +157,12 @@ export function ResultsPage() {
           </div>
         </div>
       </TableWrap>
+      <EditRowDrawer
+        row={editing}
+        open={Boolean(editing)}
+        onClose={() => setEditing(undefined)}
+        onSubmit={(payload) => updateRow.mutate(payload)}
+      />
     </div>
   );
 }

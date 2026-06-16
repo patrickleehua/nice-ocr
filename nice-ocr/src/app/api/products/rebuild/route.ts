@@ -16,6 +16,7 @@ export async function POST(request: Request) {
 
   await prisma.productObservation.deleteMany({});
   await prisma.productConflict.deleteMany({});
+  await prisma.product.deleteMany({});
 
   for (const row of rows) {
     await prisma.productObservation.create({

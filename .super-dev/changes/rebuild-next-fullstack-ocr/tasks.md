@@ -23,7 +23,7 @@
 - [x] Implement Conflicts page.
 - [x] Implement Import page.
 - [x] Implement Settings page.
-- [ ] Implement common drawers/dialogs: create batch, edit row, confirm action, risk details.
+- [x] Implement common drawers/dialogs: create batch, edit row, confirm action, risk details.
 - [ ] Run frontend build/lint/runtime smoke.
 - [ ] Stop for preview confirmation.
 
@@ -58,7 +58,7 @@
 - [x] Add product/conflict APIs.
 - [x] Add export APIs.
 - [x] Add import APIs.
-- [ ] Replace frontend mock data with API-backed queries/mutations.
+- [x] Replace frontend mock data with API-backed queries/mutations.
 
 ## 6. Quality
 

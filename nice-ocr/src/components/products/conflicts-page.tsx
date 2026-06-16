@@ -1,11 +1,45 @@
+"use client";
+
 import { CheckCircle2, Eye, Filter } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { conflicts } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { apiGet } from "@/lib/api/client";
+import type { ConflictItem, RiskLevel } from "@/lib/types";
+
+type ApiConflict = {
+  id: string;
+  type: string;
+  severity: string;
+  reason: string;
+  sourceRowIdsJson?: string;
+  status: "open" | "resolved" | "ignored";
+  product?: { name: string; code?: string | null } | null;
+};
+
+function toConflictItem(conflict: ApiConflict): ConflictItem {
+  const sourceRows = conflict.sourceRowIdsJson ? JSON.parse(conflict.sourceRowIdsJson) : [];
+  return {
+    id: conflict.id,
+    type: conflict.type,
+    severity: conflict.severity as RiskLevel,
+    reason: conflict.reason,
+    product: conflict.product?.name ?? conflict.product?.code ?? "-",
+    sourceCount: Array.isArray(sourceRows) ? sourceRows.length : 0,
+    status: conflict.status,
+  };
+}
 
 export function ConflictsPage() {
+  const { data } = useQuery<{ conflicts: ApiConflict[] }>({
+    queryKey: ["conflicts"],
+    queryFn: () => apiGet("/api/conflicts"),
+  });
+  const rows = data?.conflicts?.map(toConflictItem) ?? conflicts;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -30,7 +64,7 @@ export function ConflictsPage() {
             </tr>
           </thead>
           <tbody>
-            {conflicts.map((conflict) => (
+            {rows.map((conflict) => (
               <tr key={conflict.id} className="hover:bg-muted/70">
                 <td className={tableCellClass}>{conflict.type}</td>
                 <td className={tableCellClass}><RiskBadge risk={conflict.severity} /></td>

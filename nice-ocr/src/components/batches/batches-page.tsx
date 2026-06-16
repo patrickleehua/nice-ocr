@@ -1,12 +1,44 @@
+"use client";
+
 import Link from "next/link";
 import { MoreHorizontal, Plus, UploadCloud } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { batches } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { BatchStatusBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { formatNumber } from "@/lib/utils";
+import { CreateBatchDrawer } from "@/components/dialogs/action-dialogs";
+import { apiGet, apiJson } from "@/lib/api/client";
+import { useState } from "react";
+import type { BatchStatus, BatchSummary, RecognitionStrategy } from "@/lib/types";
 
 export function BatchesPage() {
+  const [createOpen, setCreateOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ batches: Array<BatchSummary & { _count?: { documents: number; rows: number } }> }>({
+    queryKey: ["batches"],
+    queryFn: () => apiGet("/api/batches"),
+  });
+  const createBatch = useMutation({
+    mutationFn: (payload: { name: string; strategy: string; notes: string }) =>
+      apiJson("/api/batches", { method: "POST", body: JSON.stringify(payload) }),
+    onSuccess: () => {
+      setCreateOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["batches"] });
+    },
+  });
+  const rows = data?.batches?.map((batch) => ({
+    ...batch,
+    status: batch.status as BatchStatus,
+    strategy: batch.strategy as RecognitionStrategy,
+    documents: batch.documents ?? batch._count?.documents ?? 0,
+    rows: batch.rows ?? batch._count?.rows ?? 0,
+    failed: batch.failed ?? 0,
+    needsReview: batch.needsReview ?? 0,
+    progress: batch.progress ?? 0,
+  })) ?? batches;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -19,7 +51,7 @@ export function BatchesPage() {
             <UploadCloud size={15} />
             上传文件
           </Button>
-          <Button size="sm" variant="primary">
+          <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
             <Plus size={15} />
             新建批次
           </Button>
@@ -58,7 +90,7 @@ export function BatchesPage() {
             </tr>
           </thead>
           <tbody>
-            {batches.map((batch) => (
+            {rows.map((batch) => (
               <tr key={batch.id} className="hover:bg-muted/70">
                 <td className={tableCellClass}>
                   <Link href={`/batches/${batch.id}`} className="font-medium text-primary hover:underline">
@@ -80,6 +112,11 @@ export function BatchesPage() {
           </tbody>
         </DataTable>
       </TableWrap>
+      <CreateBatchDrawer
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={(payload) => createBatch.mutate(payload)}
+      />
     </div>
   );
 }

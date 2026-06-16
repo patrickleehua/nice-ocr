@@ -1,14 +1,66 @@
+"use client";
+
 import { Check, ChevronLeft, ChevronRight, Maximize2, Plus, ZoomIn, ZoomOut } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { documents, recognitionRows } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils";
+import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
+import { apiGet } from "@/lib/api/client";
+import { useState } from "react";
+import type { DocumentSummary, RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
+
+type ApiDocumentRow = {
+  id: string;
+  batchId: string;
+  documentId: string;
+  normalizedMonth?: string | null;
+  code?: string | null;
+  name: string;
+  unit?: string | null;
+  qty: number;
+  price: number;
+  amount: number;
+  remark?: string | null;
+  riskLevel: string;
+  status: string;
+  riskReasonsJson?: string | null;
+  updatedAt: string;
+};
+
+function toReviewRow(row: ApiDocumentRow): RecognitionRow {
+  return {
+    id: row.id,
+    batchId: row.batchId,
+    batchName: row.batchId,
+    documentId: row.documentId,
+    documentName: row.documentId,
+    month: row.normalizedMonth ?? "",
+    code: row.code ?? "",
+    name: row.name,
+    unit: row.unit ?? "",
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    amount: Number(row.amount) || 0,
+    risk: row.riskLevel as RiskLevel,
+    status: row.status as RowStatus,
+    conflictReason: JSON.parse(row.riskReasonsJson || "[]").join("、") || undefined,
+    remark: row.remark ?? "",
+    updatedAt: row.updatedAt,
+  };
+}
 
 export function ReviewPage() {
+  const [riskOpen, setRiskOpen] = useState(false);
+  const { data } = useQuery<{ document: DocumentSummary & { rows: ApiDocumentRow[] } }>({
+    queryKey: ["document", documents[0].id],
+    queryFn: () => apiGet(`/api/documents/${documents[0].id}`),
+  });
   const current = documents[0];
-  const rows = recognitionRows.filter((row) => row.documentId === current.id);
+  const rows = data?.document?.rows?.map(toReviewRow) ?? recognitionRows.filter((row) => row.documentId === current.id);
 
   return (
     <div className="space-y-4">
@@ -125,11 +177,12 @@ export function ReviewPage() {
             <div className="space-y-2 p-4 text-sm">
               <div>风险原因：疑似非商品名、金额校验差异、识别尝试不一致。</div>
               <div className="text-muted-foreground">建议：检查原图汇总行，确认是否排除。</div>
-              <Button size="sm" variant="primary">定位此行</Button>
+              <Button size="sm" variant="primary" onClick={() => setRiskOpen(true)}>查看风险详情</Button>
             </div>
           </Panel>
         </div>
       </div>
+      <RiskDetailDrawer open={riskOpen} onClose={() => setRiskOpen(false)} />
     </div>
   );
 }
