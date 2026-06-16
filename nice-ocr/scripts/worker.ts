@@ -3,7 +3,7 @@ import path from "node:path";
 import { prisma } from "@/lib/db/client";
 import { env } from "@/lib/env";
 import { OpenAICompatibleProvider } from "@/lib/recognition/provider";
-import { claimNextJob } from "@/lib/queue/jobs";
+import { claimNextJob, enqueueSecondPassIfNeeded } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
 
 const workerId = `worker-${process.pid}`;
@@ -73,13 +73,18 @@ async function processOne() {
       });
     }
 
+    const hasHighRisk = result.rows.some((row) => validateRow(row).riskLevel === "high");
     await prisma.document.update({
       where: { id: job.documentId },
       data: {
         status: "extracted",
-        riskLevel: result.rows.some((row) => validateRow(row).riskLevel === "high") ? "high" : "low",
+        riskLevel: hasHighRisk ? "high" : "low",
       },
     });
+
+    if (job.batch.strategy === "balanced" && job.type === "extract" && hasHighRisk) {
+      await enqueueSecondPassIfNeeded(job.documentId, job.batchId);
+    }
 
     await prisma.recognitionJob.update({
       where: { id: job.id },

@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { cleanProductCode, isInvalidProductName, normalizeMonth, validateRow } from "../rules";
+
+describe("validation rules", () => {
+  it("normalizes supported date formats to Chinese month", () => {
+    assert.equal(normalizeMonth("2024-06-15"), "2024年6月");
+    assert.equal(normalizeMonth("2024.12.01"), "2024年12月");
+    assert.equal(normalizeMonth("2024年7月3日"), "2024年7月");
+  });
+
+  it("cleans pure 4 and 5 digit product codes", () => {
+    assert.equal(cleanProductCode("1234"), "");
+    assert.equal(cleanProductCode("12345"), "");
+    assert.equal(cleanProductCode("12"), "12");
+    assert.equal(cleanProductCode("A1001"), "A1001");
+  });
+
+  it("marks summary words as invalid product names", () => {
+    assert.equal(isInvalidProductName("合计"), true);
+    assert.equal(isInvalidProductName("商品名"), true);
+    assert.equal(isInvalidProductName("苹果"), false);
+  });
+
+  it("raises risk for invalid names and amount mismatch", () => {
+    const invalid = validateRow({ code: "", name: "合计", qty: 2, price: 3, amount: 9 });
+    assert.equal(invalid.riskLevel, "high");
+    assert.deepEqual(invalid.reasons, ["INVALID_PRODUCT_NAME", "AMOUNT_MISMATCH"]);
+
+    const clean = validateRow({ code: "A1001", name: "苹果", qty: 2, price: 3, amount: 6 });
+    assert.equal(clean.riskLevel, "low");
+  });
+});

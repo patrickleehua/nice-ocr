@@ -45,7 +45,7 @@
 - [x] Add provider interface.
 - [x] Add OpenAI-compatible provider.
 - [x] Add structured extraction schema.
-- [ ] Add fast/balanced strategy flow.
+- [x] Add fast/balanced strategy flow.
 - [x] Persist extraction attempts and raw output.
 - [x] Surface job and provider status in UI.
 
@@ -62,7 +62,7 @@
 
 ## 6. Quality
 
-- [ ] Unit tests for validation and product conflict rules.
+- [x] Unit tests for validation and product conflict rules.
 - [ ] Integration tests for import, queue, row edit, product rebuild, export.
 - [ ] Build passes.
 - [ ] Lint passes.
