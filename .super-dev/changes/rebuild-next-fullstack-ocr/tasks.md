@@ -68,4 +68,4 @@
 - [ ] Lint passes.
 - [x] Runtime smoke passes.
 - [x] Source scan confirms no emoji UI icons.
-- [ ] Delivery proof-pack summarized.
+- [x] Delivery proof-pack summarized.
