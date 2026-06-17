@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApprovalModeBadge, BatchStatusBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { CreateBatchDrawer } from "@/components/dialogs/action-dialogs";
 import { apiGet, apiJson, apiUpload } from "@/lib/api/client";
@@ -30,10 +31,19 @@ export function BatchesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useQuery<{ batches: ApiBatch[] }>({
-    queryKey: ["batches"],
-    queryFn: () => apiGet(apiPaths.batches),
+  const PAGE_SIZE = 20;
+  const queryString = (() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (search) params.set("search", search);
+    if (status) params.set("status", status);
+    return params.toString();
+  })();
+
+  const { data, isLoading } = useQuery<{ batches: ApiBatch[]; total: number }>({
+    queryKey: ["batches", queryString],
+    queryFn: () => apiGet(`${apiPaths.batches}?${queryString}`),
   });
   const { data: settings } = useQuery<{ defaults: { approvalMode: string } }>({
     queryKey: ["settings"],
@@ -66,12 +76,9 @@ export function BatchesPage() {
     fileInputRef.current?.click();
   }
 
-  const all = data?.batches ?? [];
-  const batches = all.filter((batch) => {
-    const matchesSearch = search ? batch.name.toLowerCase().includes(search.toLowerCase()) : true;
-    const matchesStatus = status ? batch.status === status : true;
-    return matchesSearch && matchesStatus;
-  });
+  const batches = data?.batches ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="space-y-4">
@@ -107,12 +114,18 @@ export function BatchesPage() {
           className="h-9 w-64 rounded-md border border-border px-3 text-sm outline-none focus:border-primary"
           placeholder="搜索批次名称"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setPage(1);
+          }}
         />
         <select
           className="h-9 rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-primary"
           value={status}
-          onChange={(event) => setStatus(event.target.value)}
+          onChange={(event) => {
+            setStatus(event.target.value);
+            setPage(1);
+          }}
         >
           <option value="">全部状态</option>
           <option value="draft">草稿</option>
@@ -173,6 +186,7 @@ export function BatchesPage() {
             )}
           </tbody>
         </DataTable>
+        <Pagination page={page} totalPages={totalPages} total={total} onPage={setPage} />
       </TableWrap>
       <CreateBatchDrawer
         open={createOpen}

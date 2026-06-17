@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RiskLevel } from "@/lib/types";
@@ -30,10 +31,18 @@ const statusBadge: Record<ApiConflict["status"], { label: string; tone: "warning
 export function ConflictsPage() {
   const queryClient = useQueryClient();
   const [onlyOpen, setOnlyOpen] = useState(true);
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useQuery<{ conflicts: ApiConflict[] }>({
-    queryKey: ["conflicts"],
-    queryFn: () => apiGet(apiPaths.conflicts),
+  const PAGE_SIZE = 20;
+  const queryString = (() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (onlyOpen) params.set("status", "open");
+    return params.toString();
+  })();
+
+  const { data, isLoading } = useQuery<{ conflicts: ApiConflict[]; total: number }>({
+    queryKey: ["conflicts", queryString],
+    queryFn: () => apiGet(`${apiPaths.conflicts}?${queryString}`),
   });
 
   const resolve = useMutation({
@@ -46,8 +55,9 @@ export function ConflictsPage() {
     },
   });
 
-  const all = data?.conflicts ?? [];
-  const conflicts = onlyOpen ? all.filter((conflict) => conflict.status === "open") : all;
+  const conflicts = data?.conflicts ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="space-y-4">
@@ -61,7 +71,10 @@ export function ConflictsPage() {
             type="checkbox"
             className="h-4 w-4"
             checked={onlyOpen}
-            onChange={(event) => setOnlyOpen(event.target.checked)}
+            onChange={(event) => {
+              setOnlyOpen(event.target.checked);
+              setPage(1);
+            }}
           />
           仅看未处理
         </label>
@@ -125,6 +138,7 @@ export function ConflictsPage() {
             )}
           </tbody>
         </DataTable>
+        <Pagination page={page} totalPages={totalPages} total={total} onPage={setPage} />
       </TableWrap>
     </div>
   );

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { Pagination } from "@/components/ui/pagination";
 import { apiDownload, apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import { formatDateTime } from "@/lib/utils";
@@ -27,19 +28,23 @@ export function ProductsPage() {
   const queryClient = useQueryClient();
   const [q, setQ] = useState("");
   const [onlyConflicts, setOnlyConflicts] = useState(false);
+  const [page, setPage] = useState(1);
 
+  const PAGE_SIZE = 20;
   const queryString = (() => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
     if (q) params.set("q", q);
     if (onlyConflicts) params.set("onlyConflicts", "true");
     return params.toString();
   })();
 
-  const { data, isLoading } = useQuery<{ products: ApiProduct[] }>({
+  const { data, isLoading } = useQuery<{ products: ApiProduct[]; total: number }>({
     queryKey: ["products", queryString],
-    queryFn: () => apiGet(`${apiPaths.products}${queryString ? `?${queryString}` : ""}`),
+    queryFn: () => apiGet(`${apiPaths.products}?${queryString}`),
   });
   const products = data?.products ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const rebuild = useMutation({
     mutationFn: () => apiJson(apiPaths.productsRebuild, { method: "POST", body: JSON.stringify({}) }),
@@ -69,18 +74,24 @@ export function ProductsPage() {
           className="h-9 w-72 rounded-md border border-border px-3 text-sm"
           placeholder="搜索产品名/编码"
           value={q}
-          onChange={(event) => setQ(event.target.value)}
+          onChange={(event) => {
+            setQ(event.target.value);
+            setPage(1);
+          }}
         />
         <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
           <input
             type="checkbox"
             className="h-4 w-4"
             checked={onlyConflicts}
-            onChange={(event) => setOnlyConflicts(event.target.checked)}
+            onChange={(event) => {
+              setOnlyConflicts(event.target.checked);
+              setPage(1);
+            }}
           />
           仅看冲突
         </label>
-        <span className="text-xs text-muted-foreground">共 {products.length} 个产品</span>
+        <span className="text-xs text-muted-foreground">共 {total} 个产品</span>
       </div>
 
       <TableWrap>
@@ -130,6 +141,7 @@ export function ProductsPage() {
             )}
           </tbody>
         </DataTable>
+        <Pagination page={page} totalPages={totalPages} total={total} onPage={setPage} />
       </TableWrap>
     </div>
   );
