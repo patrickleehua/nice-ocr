@@ -1,6 +1,39 @@
 import "dotenv/config";
 
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { prisma } from "../src/lib/db/client";
+import { env } from "../src/lib/env";
+
+/** 生成一张 SVG 单据占位图，让审核台 / 批次详情的原图链路在种子数据下也能跑通。 */
+async function writeSeedReceipt(): Promise<string> {
+  const dir = path.join(env.storageDir, "originals", "seed");
+  await mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, "seed-doc-0123.svg");
+  const lines = [
+    ["A1001", "苹果", "10kg", "85.00"],
+    ["A1002", "香蕉", "5kg", "30.00"],
+    ["B2001", "牛奶", "2箱", "90.00"],
+    ["", "合计", "", "205.00"],
+  ];
+  const rowSvg = lines
+    .map(
+      ([code, name, qty, amount], index) =>
+        `<text x="24" y="${150 + index * 36}" font-size="18" fill="#1f2937">${code || "—"}　${name}　${qty}　¥${amount}</text>`,
+    )
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="460" viewBox="0 0 360 460">
+  <rect width="360" height="460" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="24" y="56" font-size="24" font-weight="bold" fill="#111827">销售单据样例</text>
+  <text x="24" y="88" font-size="16" fill="#6b7280">2024-06-15 · 种子数据占位图</text>
+  <line x1="24" y1="110" x2="336" y2="110" stroke="#e5e7eb"/>
+  ${rowSvg}
+  <line x1="24" y1="300" x2="336" y2="300" stroke="#e5e7eb"/>
+  <text x="24" y="336" font-size="14" fill="#9ca3af">该图为本地占位，可在批次详情上传真实单据替换。</text>
+</svg>`;
+  await writeFile(filePath, svg, "utf-8");
+  return filePath;
+}
 
 async function main() {
   await prisma.productConflict.deleteMany();
@@ -65,13 +98,14 @@ async function main() {
     },
   });
 
+  const receiptPath = await writeSeedReceipt();
   const doc = await prisma.document.create({
     data: {
       batchId: batch.id,
-      originalName: "单据_20240615_0123.jpg",
-      storedPath: "",
+      originalName: "单据_20240615_0123.svg",
+      storedPath: receiptPath,
       hash: "seed-doc-0123",
-      mimeType: "image/jpeg",
+      mimeType: "image/svg+xml",
       sizeBytes: 0,
       status: "extracted",
       reviewStatus: "pending",

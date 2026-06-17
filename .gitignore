@@ -1,2 +1,7 @@
 
 docs
+.claude
+.code
+plugins
+node_modules
+.playwright-mcp

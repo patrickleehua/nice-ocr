@@ -1,18 +1,19 @@
 "use client";
 
-import { Download, Edit3, Filter, MoreHorizontal, RotateCcw } from "lucide-react";
+import { Download, Edit3, Filter, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { recognitionRows } from "@/data/mock-data";
 import { Button } from "@/components/ui/button";
 import { RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils";
 import { EditRowDrawer } from "@/components/dialogs/action-dialogs";
-import { apiGet, apiJson } from "@/lib/api/client";
+import { apiDownload, apiGet, apiJson } from "@/lib/api/client";
+import { apiPaths } from "@/lib/api/paths";
 import type { RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
 
-type ApiRecognitionRow = {
+interface ApiRecognitionRow {
   id: string;
   batchId: string;
   documentId: string;
@@ -24,16 +25,21 @@ type ApiRecognitionRow = {
   price: number;
   amount: number;
   remark?: string | null;
-  riskLevel: string;
-  status: string;
+  riskLevel: RiskLevel;
+  status: RowStatus;
   conflictState?: string | null;
   riskReasonsJson?: string | null;
-  updatedAt: string;
   batch?: { name: string };
   document?: { originalName: string };
-};
+}
 
 function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
+  let reasons: string[] = [];
+  try {
+    reasons = JSON.parse(row.riskReasonsJson || "[]");
+  } catch {
+    reasons = [];
+  }
   return {
     id: row.id,
     batchId: row.batchId,
@@ -47,33 +53,76 @@ function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
     qty: Number(row.qty) || 0,
     price: Number(row.price) || 0,
     amount: Number(row.amount) || 0,
-    risk: row.riskLevel as RiskLevel,
-    status: row.status as RowStatus,
-    conflictReason:
-      row.conflictState && row.conflictState !== "none"
-        ? JSON.parse(row.riskReasonsJson || "[]").join("、")
-        : undefined,
+    risk: row.riskLevel,
+    status: row.status,
+    conflictReason: reasons.length ? reasons.join("、") : undefined,
     remark: row.remark ?? "",
-    updatedAt: row.updatedAt,
+    updatedAt: "",
   };
 }
 
+const PAGE_SIZE = 50;
+
 export function ResultsPage() {
-  const [editing, setEditing] = useState<RecognitionRow | undefined>();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { data } = useQuery<{ rows: ApiRecognitionRow[] }>({
-    queryKey: ["rows"],
-    queryFn: () => apiGet("/api/rows"),
+  const [editing, setEditing] = useState<RecognitionRow | undefined>();
+  const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState({
+    status: "",
+    risk: "",
+    name: searchParams.get("name") ?? "",
   });
-  const rows = data?.rows?.map(toRecognitionRow) ?? recognitionRows;
+
+  const queryString = (() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (filters.status) params.set("status", filters.status);
+    if (filters.risk) params.set("risk", filters.risk);
+    if (filters.name) params.set("name", filters.name);
+    return params.toString();
+  })();
+
+  const { data, isLoading } = useQuery<{ rows: ApiRecognitionRow[]; total: number; page: number }>({
+    queryKey: ["rows", queryString],
+    queryFn: () => apiGet(`${apiPaths.rows}?${queryString}`),
+  });
+
+  const rows = data?.rows?.map(toRecognitionRow) ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["rows"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+
   const updateRow = useMutation({
     mutationFn: (payload: Partial<RecognitionRow>) =>
-      apiJson(`/api/rows/${editing?.id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+      apiJson(apiPaths.row(editing?.id as string), { method: "PATCH", body: JSON.stringify(payload) }),
     onSuccess: () => {
       setEditing(undefined);
-      queryClient.invalidateQueries({ queryKey: ["rows"] });
+      invalidate();
     },
   });
+  const confirmRow = useMutation({
+    mutationFn: (id: string) =>
+      apiJson(apiPaths.rowsBulkConfirm, { method: "POST", body: JSON.stringify({ rowIds: [id] }) }),
+    onSuccess: invalidate,
+  });
+  const excludeRow = useMutation({
+    mutationFn: (id: string) => apiJson(apiPaths.row(id), { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+  const rebuild = useMutation({
+    mutationFn: () => apiJson(apiPaths.productsRebuild, { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["products"] }),
+  });
+  const exportRows = useMutation({ mutationFn: () => apiDownload(apiPaths.exportsRecognition) });
+
+  function patchFilter(patch: Partial<typeof filters>) {
+    setPage(1);
+    setFilters((current) => ({ ...current, ...patch }));
+  }
 
   return (
     <div className="space-y-4">
@@ -83,20 +132,47 @@ export function ResultsPage() {
           <p className="mt-1 text-sm text-muted-foreground">查看、筛选、编辑、确认所有识别明细行。</p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="secondary"><RotateCcw size={15} />重建产品库</Button>
-          <Button size="sm" variant="primary"><Download size={15} />导出</Button>
+          <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
+            <RotateCcw size={15} />重建产品库
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => exportRows.mutate()} disabled={exportRows.isPending}>
+            <Download size={15} />导出
+          </Button>
         </div>
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <select className="h-9 rounded-md border border-border bg-surface px-3 text-sm"><option>全部批次</option></select>
-          <select className="h-9 rounded-md border border-border bg-surface px-3 text-sm"><option>全部文档</option></select>
-          <select className="h-9 rounded-md border border-border bg-surface px-3 text-sm"><option>2024年6月</option></select>
-          <select className="h-9 rounded-md border border-border bg-surface px-3 text-sm"><option>待审核</option></select>
-          <select className="h-9 rounded-md border border-border bg-surface px-3 text-sm"><option>风险：全部</option></select>
-          <input className="h-9 w-56 rounded-md border border-border px-3 text-sm" placeholder="产品编码/名称" />
-          <Button size="sm" variant="secondary"><Filter size={15} />筛选</Button>
+          <select
+            className="h-9 rounded-md border border-border bg-surface px-3 text-sm"
+            value={filters.status}
+            onChange={(event) => patchFilter({ status: event.target.value })}
+          >
+            <option value="">全部状态</option>
+            <option value="pending">待审核</option>
+            <option value="confirmed">已确认</option>
+            <option value="conflict">冲突</option>
+            <option value="excluded">已排除</option>
+          </select>
+          <select
+            className="h-9 rounded-md border border-border bg-surface px-3 text-sm"
+            value={filters.risk}
+            onChange={(event) => patchFilter({ risk: event.target.value })}
+          >
+            <option value="">风险：全部</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
+          </select>
+          <input
+            className="h-9 w-56 rounded-md border border-border px-3 text-sm"
+            placeholder="产品编码/名称"
+            value={filters.name}
+            onChange={(event) => patchFilter({ name: event.target.value })}
+          />
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <Filter size={14} />共 {total} 条
+          </span>
         </div>
       </div>
 
@@ -121,39 +197,74 @@ export function ResultsPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.id} className="hover:bg-muted/70">
-                <td className={tableCellClass}>{index + 1}</td>
-                <td className={tableCellClass}>{row.batchName}</td>
-                <td className={tableCellClass}>{row.documentName}</td>
-                <td className={tableCellClass}>{row.month}</td>
-                <td className={tableCellClass}>{row.code || "-"}</td>
-                <td className={tableCellClass}>{row.name}</td>
-                <td className={tableCellClass}>{row.unit || "-"}</td>
-                <td className={tableCellClass}>{row.qty.toFixed(2)}</td>
-                <td className={tableCellClass}>{formatCurrency(row.price)}</td>
-                <td className={tableCellClass}>{formatCurrency(row.amount)}</td>
-                <td className={tableCellClass}><RiskBadge risk={row.risk} /></td>
-                <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
-                <td className={tableCellClass}>{row.conflictReason ?? "-"}</td>
-                <td className={tableCellClass}>
-                  <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" aria-label="编辑行" onClick={() => setEditing(row)}><Edit3 size={15} /></Button>
-                    <Button size="icon" variant="ghost" aria-label="更多操作"><MoreHorizontal size={15} /></Button>
-                  </div>
+            {rows.length ? (
+              rows.map((row, index) => (
+                <tr key={row.id} className="hover:bg-muted/70">
+                  <td className={tableCellClass}>{(page - 1) * PAGE_SIZE + index + 1}</td>
+                  <td className={tableCellClass}>{row.batchName}</td>
+                  <td className={tableCellClass}>{row.documentName}</td>
+                  <td className={tableCellClass}>{row.month || "-"}</td>
+                  <td className={tableCellClass}>{row.code || "-"}</td>
+                  <td className={tableCellClass}>{row.name}</td>
+                  <td className={tableCellClass}>{row.unit || "-"}</td>
+                  <td className={tableCellClass}>{row.qty.toFixed(2)}</td>
+                  <td className={tableCellClass}>{formatCurrency(row.price)}</td>
+                  <td className={tableCellClass}>{formatCurrency(row.amount)}</td>
+                  <td className={tableCellClass}><RiskBadge risk={row.risk} /></td>
+                  <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
+                  <td className={tableCellClass}>{row.conflictReason ?? "-"}</td>
+                  <td className={tableCellClass}>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => confirmRow.mutate(row.id)}
+                        disabled={confirmRow.isPending || row.status === "confirmed"}
+                      >
+                        确认
+                      </Button>
+                      <Button size="icon" variant="ghost" aria-label="编辑行" onClick={() => setEditing(row)}>
+                        <Edit3 size={15} />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label="排除行"
+                        onClick={() => excludeRow.mutate(row.id)}
+                        disabled={excludeRow.isPending}
+                      >
+                        <Trash2 size={15} />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className={tableCellClass} colSpan={14}>
+                  <span className="text-muted-foreground">{isLoading ? "加载中..." : "没有符合条件的记录"}</span>
                 </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </DataTable>
         <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground">
-          <span>共 1,532 条，当前显示 50 条</span>
+          <span>共 {total} 条，第 {page} / {totalPages} 页</span>
           <div className="flex items-center gap-1">
-            {[1, 2, 3, 4, 5].map((page) => (
-              <button key={page} className="h-7 min-w-7 rounded border border-border bg-surface px-2 hover:bg-muted">
-                {page}
-              </button>
-            ))}
+            <button
+              className="h-7 min-w-7 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page <= 1}
+            >
+              上一页
+            </button>
+            <button
+              className="h-7 min-w-7 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page >= totalPages}
+            >
+              下一页
+            </button>
           </div>
         </div>
       </TableWrap>

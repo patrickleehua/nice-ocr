@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Plus, Save, TestTube2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -62,16 +62,17 @@ export function SettingsPage() {
     queryFn: () => apiGet<SettingsPayload>("/api/settings"),
   });
   const [draft, setDraft] = useState<SettingsPayload | null>(null);
+  const [syncedFrom, setSyncedFrom] = useState<SettingsPayload | null>(null);
   const [testState, setTestState] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    if (data) {
-      setDraft({
-        defaults: data.defaults,
-        providers: data.providers.map((provider) => ({ ...provider, apiKey: "" })),
-      });
-    }
-  }, [data]);
+  // 渲染期同步：拉到新设置时初始化可编辑副本，避免在 effect 内 setState 触发级联渲染。
+  if (data && data !== syncedFrom) {
+    setSyncedFrom(data);
+    setDraft({
+      defaults: data.defaults,
+      providers: data.providers.map((provider) => ({ ...provider, apiKey: "" })),
+    });
+  }
 
   const enabledCount = useMemo(() => draft?.providers.filter((provider) => provider.enabled).length ?? 0, [draft]);
 

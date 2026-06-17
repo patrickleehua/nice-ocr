@@ -1,44 +1,53 @@
 "use client";
 
-import { CheckCircle2, Eye, Filter } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { conflicts } from "@/data/mock-data";
+import { Ban, CheckCircle2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
-import { apiGet } from "@/lib/api/client";
-import type { ConflictItem, RiskLevel } from "@/lib/types";
+import { apiGet, apiJson } from "@/lib/api/client";
+import { apiPaths } from "@/lib/api/paths";
+import type { RiskLevel } from "@/lib/types";
 
-type ApiConflict = {
+interface ApiConflict {
   id: string;
   type: string;
-  severity: string;
+  severity: RiskLevel;
   reason: string;
   sourceRowIdsJson?: string;
   status: "open" | "resolved" | "ignored";
   product?: { name: string; code?: string | null } | null;
-};
-
-function toConflictItem(conflict: ApiConflict): ConflictItem {
-  const sourceRows = conflict.sourceRowIdsJson ? JSON.parse(conflict.sourceRowIdsJson) : [];
-  return {
-    id: conflict.id,
-    type: conflict.type,
-    severity: conflict.severity as RiskLevel,
-    reason: conflict.reason,
-    product: conflict.product?.name ?? conflict.product?.code ?? "-",
-    sourceCount: Array.isArray(sourceRows) ? sourceRows.length : 0,
-    status: conflict.status,
-  };
 }
 
+const statusBadge: Record<ApiConflict["status"], { label: string; tone: "warning" | "success" | "neutral" }> = {
+  open: { label: "未处理", tone: "warning" },
+  resolved: { label: "已解决", tone: "success" },
+  ignored: { label: "已忽略", tone: "neutral" },
+};
+
 export function ConflictsPage() {
-  const { data } = useQuery<{ conflicts: ApiConflict[] }>({
+  const queryClient = useQueryClient();
+  const [onlyOpen, setOnlyOpen] = useState(true);
+
+  const { data, isLoading } = useQuery<{ conflicts: ApiConflict[] }>({
     queryKey: ["conflicts"],
-    queryFn: () => apiGet("/api/conflicts"),
+    queryFn: () => apiGet(apiPaths.conflicts),
   });
-  const rows = data?.conflicts?.map(toConflictItem) ?? conflicts;
+
+  const resolve = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "resolved" | "ignored" }) =>
+      apiJson(apiPaths.conflict(id), { method: "PATCH", body: JSON.stringify({ status }) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conflicts"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+
+  const all = data?.conflicts ?? [];
+  const conflicts = onlyOpen ? all.filter((conflict) => conflict.status === "open") : all;
 
   return (
     <div className="space-y-4">
@@ -47,7 +56,15 @@ export function ConflictsPage() {
           <h1 className="text-xl font-semibold">冲突管理</h1>
           <p className="mt-1 text-sm text-muted-foreground">按严重程度处理产品库和识别明细中的数据质量问题。</p>
         </div>
-        <Button size="sm" variant="secondary"><Filter size={15} />筛选冲突</Button>
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={onlyOpen}
+            onChange={(event) => setOnlyOpen(event.target.checked)}
+          />
+          仅看未处理
+        </label>
       </div>
 
       <TableWrap>
@@ -64,25 +81,61 @@ export function ConflictsPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((conflict) => (
-              <tr key={conflict.id} className="hover:bg-muted/70">
-                <td className={tableCellClass}>{conflict.type}</td>
-                <td className={tableCellClass}><RiskBadge risk={conflict.severity} /></td>
-                <td className={tableCellClass}>{conflict.product}</td>
-                <td className={tableCellClass}>{conflict.reason}</td>
-                <td className={tableCellClass}>{conflict.sourceCount}</td>
-                <td className={tableCellClass}><Badge tone="warning">未处理</Badge></td>
-                <td className={tableCellClass}>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="secondary"><Eye size={14} />查看</Button>
-                    <Button size="sm" variant="primary"><CheckCircle2 size={14} />解决</Button>
-                  </div>
+            {conflicts.length ? (
+              conflicts.map((conflict) => {
+                const sourceCount = safeParseArray(conflict.sourceRowIdsJson).length;
+                const badge = statusBadge[conflict.status];
+                return (
+                  <tr key={conflict.id} className="hover:bg-muted/70">
+                    <td className={tableCellClass}>{conflict.type}</td>
+                    <td className={tableCellClass}><RiskBadge risk={conflict.severity} /></td>
+                    <td className={tableCellClass}>{conflict.product?.name ?? conflict.product?.code ?? "-"}</td>
+                    <td className={tableCellClass}>{conflict.reason}</td>
+                    <td className={tableCellClass}>{sourceCount}</td>
+                    <td className={tableCellClass}><Badge tone={badge.tone}>{badge.label}</Badge></td>
+                    <td className={tableCellClass}>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={() => resolve.mutate({ id: conflict.id, status: "resolved" })}
+                          disabled={resolve.isPending || conflict.status !== "open"}
+                        >
+                          <CheckCircle2 size={14} />解决
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => resolve.mutate({ id: conflict.id, status: "ignored" })}
+                          disabled={resolve.isPending || conflict.status !== "open"}
+                        >
+                          <Ban size={14} />忽略
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td className={tableCellClass} colSpan={7}>
+                  <span className="text-muted-foreground">{isLoading ? "加载中..." : "暂无冲突"}</span>
                 </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </DataTable>
       </TableWrap>
     </div>
   );
+}
+
+function safeParseArray(json: string | undefined): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
 }

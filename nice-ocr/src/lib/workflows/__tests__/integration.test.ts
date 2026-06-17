@@ -7,7 +7,8 @@ import { enqueueRecognitionJob, enqueueSecondPassIfNeeded, claimNextJob } from "
 import { buildProductExport, buildRecognitionExport } from "../exports";
 import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
-import { excludeRecognitionRow, updateRecognitionRow } from "../rows";
+import { confirmRecognitionRows, excludeRecognitionRow, updateRecognitionRow } from "../rows";
+import { resolveProductConflict } from "../conflicts";
 
 const rollback = Symbol("rollback");
 
@@ -24,7 +25,7 @@ async function withRollback<T>(callback: (tx: Prisma.TransactionClient) => Promi
 
 async function readWorkbook(buffer: Buffer) {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
+  await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
   return workbook;
 }
 
@@ -69,7 +70,11 @@ describe("workflow integration", () => {
 
       assert.equal(rows[0].normalizedMonth, "2024年6月");
       assert.equal(rows[0].riskLevel, "high");
-      assert.deepEqual(JSON.parse(rows[0].riskReasonsJson), ["INVALID_PRODUCT_NAME", "AMOUNT_MISMATCH"]);
+      assert.deepEqual(JSON.parse(rows[0].riskReasonsJson), [
+        "CODE_CLEANED_BY_RULE",
+        "INVALID_PRODUCT_NAME",
+        "AMOUNT_MISMATCH",
+      ]);
       assert.equal(rows[1].status, "confirmed");
     });
   });
@@ -202,6 +207,88 @@ describe("workflow integration", () => {
       assert.equal(products.some((product) => product.name === "合计" && product.conflicts.length === 1), true);
       assert.equal(recognitionWorkbook.getWorksheet("识别结果")?.rowCount, 3);
       assert.equal(productWorkbook.getWorksheet("副食品资料库")?.rowCount, 3);
+    });
+  });
+
+  it("confirms only selected rows by rowIds and rejects empty selector", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "confirm-rowids" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "confirm.jpg",
+          storedPath: "",
+          hash: "confirm-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      const high = await tx.recognitionRow.create({
+        data: { batchId: batch.id, documentId: document.id, rowIndex: 1, name: "苹果", riskLevel: "high", status: "pending" },
+      });
+      const low = await tx.recognitionRow.create({
+        data: { batchId: batch.id, documentId: document.id, rowIndex: 2, name: "香蕉", riskLevel: "low", status: "pending" },
+      });
+
+      // 空选择器不得确认任何行。
+      assert.equal(await confirmRecognitionRows({}, tx), null);
+
+      // rowIds 精确确认所选行（即使是高风险）。
+      assert.equal(await confirmRecognitionRows({ rowIds: [high.id] }, tx), 1);
+
+      const rows = await tx.recognitionRow.findMany({ where: { batchId: batch.id }, orderBy: { rowIndex: "asc" } });
+      assert.equal(rows[0].status, "confirmed");
+      assert.equal(rows[0].id, high.id);
+      assert.equal(rows[1].status, "pending");
+      assert.equal(rows[1].id, low.id);
+    });
+  });
+
+  it("confirms whole document, and batch selector defaults to low-risk only", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "confirm-scope" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "scope.jpg",
+          storedPath: "",
+          hash: "scope-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      await tx.recognitionRow.createMany({
+        data: [
+          { batchId: batch.id, documentId: document.id, rowIndex: 1, name: "苹果", riskLevel: "high", status: "pending" },
+          { batchId: batch.id, documentId: document.id, rowIndex: 2, name: "香蕉", riskLevel: "low", status: "pending" },
+        ],
+      });
+
+      // batchId 默认仅低风险 → 只确认 1 行。
+      assert.equal(await confirmRecognitionRows({ batchId: batch.id }, tx), 1);
+      const afterBatch = await tx.recognitionRow.findMany({ where: { batchId: batch.id }, orderBy: { rowIndex: "asc" } });
+      assert.equal(afterBatch[0].status, "pending");
+      assert.equal(afterBatch[1].status, "confirmed");
+
+      // documentId 确认整单（含高风险）。
+      assert.equal(await confirmRecognitionRows({ documentId: document.id }, tx), 2);
+      const afterDoc = await tx.recognitionRow.findMany({ where: { batchId: batch.id } });
+      assert.equal(afterDoc.every((row) => row.status === "confirmed"), true);
+    });
+  });
+
+  it("resolves a product conflict and returns null for a missing one", async () => {
+    await withRollback(async (tx) => {
+      const product = await tx.product.create({ data: { name: "合计" } });
+      const conflict = await tx.productConflict.create({
+        data: { productId: product.id, type: "INVALID_PRODUCT_NAME", severity: "high", reason: "疑似非商品名" },
+      });
+
+      const resolved = await resolveProductConflict(conflict.id, { status: "resolved" }, tx);
+      assert.equal(resolved?.status, "resolved");
+      assert.ok(resolved?.resolvedAt);
+
+      assert.equal(await resolveProductConflict("does-not-exist", {}, tx), null);
     });
   });
 });

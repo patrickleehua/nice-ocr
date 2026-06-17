@@ -155,7 +155,6 @@ export function RiskDetailDrawer({
         <div className="space-y-3 p-4 text-sm">
           <div>系统会综合商品名规则、金额校验、产品库冲突和多次识别差异给出风险等级。</div>
           <div className="rounded-md bg-danger-soft p-3 text-danger-strong">高风险行不会被自动确认，需要人工审核。</div>
-          <Button variant="primary" size="sm">定位来源行</Button>
         </div>
       </Panel>
     </DrawerShell>

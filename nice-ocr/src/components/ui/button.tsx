@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import { cloneElement, isValidElement, type ButtonHTMLAttributes, type ReactElement } from "react";
 import { cn } from "@/lib/utils";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "success";
@@ -7,6 +7,8 @@ type ButtonSize = "sm" | "md" | "icon";
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  /** 渲染为子元素（如 next/link 的 <Link>），合并样式而非包一层 <button>。 */
+  asChild?: boolean;
 }
 
 const variants: Record<ButtonVariant, string> = {
@@ -28,18 +30,27 @@ export function Button({
   variant = "secondary",
   size = "md",
   type = "button",
+  asChild = false,
+  children,
   ...props
 }: ButtonProps) {
+  const composedClassName = cn(
+    "inline-flex shrink-0 items-center justify-center rounded-md border font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
+    variants[variant],
+    sizes[size],
+    className,
+  );
+
+  if (asChild && isValidElement(children)) {
+    const child = children as ReactElement<{ className?: string }>;
+    return cloneElement(child, {
+      className: cn(composedClassName, child.props.className),
+    });
+  }
+
   return (
-    <button
-      type={type}
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
-        variants[variant],
-        sizes[size],
-        className,
-      )}
-      {...props}
-    />
+    <button type={type} className={composedClassName} {...props}>
+      {children}
+    </button>
   );
 }

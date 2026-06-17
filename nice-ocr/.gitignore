@@ -36,8 +36,13 @@ yarn-error.log*
 # local database
 dev.db
 dev.db-*
+test.db
+test.db-*
 *.sqlite
 *.sqlite3
+
+# runtime file storage (uploads + generated seed images, regenerable via db:seed)
+/storage
 
 # vercel
 .vercel
