@@ -4,12 +4,11 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db/client";
 import { env } from "@/lib/env";
-import { OpenAICompatibleProvider } from "@/lib/recognition/provider";
+import { createConfiguredRecognitionProvider } from "@/lib/recognition/provider";
 import { claimNextJob, enqueueSecondPassIfNeeded } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
 
 const workerId = `worker-${process.pid}`;
-const provider = new OpenAICompatibleProvider();
 
 async function processOne() {
   const job = await claimNextJob(workerId);
@@ -17,6 +16,7 @@ async function processOne() {
 
   const startedAt = new Date();
   try {
+    const provider = await createConfiguredRecognitionProvider();
     const imageBuffer = await readFile(job.document.storedPath);
     const result = await provider.recognize({
       imageBase64: imageBuffer.toString("base64"),
@@ -26,21 +26,22 @@ async function processOne() {
     const attemptDir = path.join(env.storageDir, "attempts", job.documentId);
     await mkdir(attemptDir, { recursive: true });
     const rawOutputPath = path.join(attemptDir, `${job.id}.json`);
-    await writeFile(rawOutputPath, JSON.stringify(result, null, 2), "utf8");
+    await writeFile(rawOutputPath, JSON.stringify(result.rawResponse, null, 2), "utf8");
 
     const attempt = await prisma.extractionAttempt.create({
       data: {
         documentId: job.documentId,
         jobId: job.id,
-        providerKey: provider.key,
-        model: env.openaiModel,
+        providerKey: result.providerKey,
+        model: result.model,
         promptVersion: "v1",
         schemaVersion: "v1",
         strategy: job.batch.strategy,
         status: "completed",
         rawOutputPath,
-        parsedJson: JSON.stringify(result),
-        validationJson: JSON.stringify({ normalizedMonth: result.normalizedMonth }),
+        parsedJson: JSON.stringify(result.extraction),
+        validationJson: JSON.stringify({ normalizedMonth: result.extraction.normalizedMonth }),
+        tokenUsageJson: result.tokenUsage ? JSON.stringify(result.tokenUsage) : undefined,
         latencyMs: Date.now() - startedAt.getTime(),
         completedAt: new Date(),
       },
@@ -50,7 +51,7 @@ async function processOne() {
       where: { documentId: job.documentId, status: { not: "confirmed" } },
     });
 
-    for (const [index, row] of result.rows.entries()) {
+    for (const [index, row] of result.extraction.rows.entries()) {
       const validation = validateRow(row);
       await prisma.recognitionRow.create({
         data: {
@@ -58,8 +59,8 @@ async function processOne() {
           documentId: job.documentId,
           canonicalAttemptId: attempt.id,
           rowIndex: index + 1,
-          rawDate: result.rawDate,
-          normalizedMonth: result.normalizedMonth,
+          rawDate: result.extraction.rawDate,
+          normalizedMonth: result.extraction.normalizedMonth,
           code: validation.cleanCode,
           name: row.name,
           unit: row.unit,
@@ -75,7 +76,7 @@ async function processOne() {
       });
     }
 
-    const hasHighRisk = result.rows.some((row) => validateRow(row).riskLevel === "high");
+    const hasHighRisk = result.extraction.rows.some((row) => validateRow(row).riskLevel === "high");
     await prisma.document.update({
       where: { id: job.documentId },
       data: {

@@ -43,7 +43,9 @@
 - [x] Add database-backed queue service.
 - [x] Add worker claim/retry/backoff lifecycle.
 - [x] Add provider interface.
-- [x] Add OpenAI-compatible provider.
+- [x] Add database-backed AI provider configuration.
+- [x] Add OpenAI Responses provider through the official OpenAI SDK.
+- [x] Add Anthropic Messages provider through the official Anthropic SDK.
 - [x] Add structured extraction schema.
 - [x] Add fast/balanced strategy flow.
 - [x] Persist extraction attempts and raw output.

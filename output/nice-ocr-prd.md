@@ -197,9 +197,9 @@ Conflict:
 Provider settings:
 
 - Provider name.
-- Type: OpenAI-compatible, OpenAI official, custom HTTP, future cloud OCR provider.
+- Protocol: OpenAI Responses or Anthropic Messages for the initial implementation.
 - Base URL if applicable.
-- API key reference from environment/settings.
+- API key stored in the configuration database; `.env` is not a model/provider configuration source.
 - Model.
 - Enabled/disabled.
 - Priority.

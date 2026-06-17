@@ -359,9 +359,10 @@ Sections:
 Provider settings:
 
 - Provider enabled.
-- Provider type.
+- Provider protocol: OpenAI Responses or Anthropic Messages.
 - Base URL.
 - Model.
+- API key input, never echoed after save.
 - Priority.
 - Test connection.
 - Last success/failure.

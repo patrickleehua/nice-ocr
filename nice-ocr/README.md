@@ -7,7 +7,7 @@
 - Next.js App Router 全栈应用
 - SQLite + Prisma 本地持久化
 - 数据库任务队列和 worker
-- OpenAI 兼容视觉模型识别
+- OpenAI Responses / Anthropic Messages SDK 视觉模型识别
 - 批次、文档、识别行、产品库、冲突、导入、导出页面
 
 ## Windows 验证步骤
@@ -40,13 +40,12 @@ http://localhost:3000
 pnpm worker
 ```
 
-如果需要真实 AI 识别，在 `.env` 中配置：
+如果需要真实 AI 识别，进入 `/settings` 配置数据库中的 AI Provider。模型、Base URL、API Key、协议和启用状态都从数据库读取，不从 `.env` 读取。
 
-```bash
-OPENAI_API_KEY=你的 key
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o
-```
+支持的协议：
+
+- `openai_responses`：使用官方 `openai` SDK 的 Responses API
+- `anthropic_messages`：使用官方 `@anthropic-ai/sdk` 的 Messages API
 
 ## 已实现入口
 
@@ -78,6 +77,8 @@ OPENAI_MODEL=gpt-4o
 - `POST /api/exports/recognition`
 - `POST /api/exports/products`
 - `POST /api/import/v5`
+- `GET/PUT /api/settings`
+- `POST /api/settings/providers/:id/test`
 
 ## Getting Started
 

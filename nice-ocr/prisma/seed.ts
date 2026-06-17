@@ -11,6 +11,50 @@ async function main() {
   await prisma.recognitionJob.deleteMany();
   await prisma.document.deleteMany();
   await prisma.batch.deleteMany();
+  await prisma.aiProviderConfig.deleteMany();
+  await prisma.appSetting.deleteMany();
+
+  await prisma.aiProviderConfig.createMany({
+    data: [
+      {
+        providerKey: "openai-responses-default",
+        displayName: "OpenAI Responses",
+        protocol: "openai_responses",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "",
+        model: "gpt-4.1",
+        enabled: false,
+        priority: 10,
+        maxOutputTokens: 2000,
+        metadataJson: JSON.stringify({ notes: "在设置页填入 API Key 后启用" }),
+      },
+      {
+        providerKey: "anthropic-default",
+        displayName: "Anthropic Messages",
+        protocol: "anthropic_messages",
+        baseUrl: "https://api.anthropic.com",
+        apiKey: "",
+        model: "claude-opus-4-6",
+        enabled: false,
+        priority: 20,
+        maxOutputTokens: 2000,
+        metadataJson: JSON.stringify({ notes: "在设置页填入 API Key 后启用" }),
+      },
+    ],
+  });
+
+  await prisma.appSetting.create({
+    data: {
+      key: "recognition.defaults",
+      valueJson: JSON.stringify({
+        strategy: "balanced",
+        amountTolerance: 0.01,
+        queueConcurrency: 3,
+        maxAttempts: 3,
+        backoffSeconds: 30,
+      }),
+    },
+  });
 
   const batch = await prisma.batch.create({
     data: {

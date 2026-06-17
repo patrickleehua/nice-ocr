@@ -18,7 +18,7 @@ Initial stack:
 - Database: SQLite via Prisma ORM.
 - File storage: local filesystem under managed `storage/`.
 - Queue: database-backed queue table + Node worker loop for v1.
-- AI: provider abstraction, OpenAI-compatible provider first.
+- AI: database-configured provider abstraction, supporting OpenAI Responses and Anthropic Messages protocols through official SDKs.
 - Export: Excel generation server-side.
 
 Future-ready:
@@ -26,6 +26,7 @@ Future-ready:
 - SQLite can migrate to PostgreSQL.
 - DB queue boundary can migrate to BullMQ/Redis.
 - Provider abstraction can add Azure Document Intelligence, Google Document AI, AWS Textract, or other LLM providers.
+- Model endpoint, API key, protocol, default model, priority, and enabled state are runtime configuration data stored in the database, not `.env`.
 
 ## 2. Why SQLite First
 
@@ -293,6 +294,32 @@ storage/
 - `key`
 - `valueJson`
 - `updatedAt`
+
+### AiProviderConfig
+
+- `id`
+- `providerKey`
+- `displayName`
+- `protocol` (`openai_responses`, `anthropic_messages`)
+- `baseUrl`
+- `apiKey`
+- `model`
+- `enabled`
+- `priority`
+- `temperature`
+- `maxOutputTokens`
+- `metadataJson`
+- `createdAt`
+- `updatedAt`
+
+Runtime rule:
+
+- `.env` only carries infrastructure values such as `DATABASE_URL` and `STORAGE_DIR`.
+- AI keys and model routing are configured in `AiProviderConfig`.
+- The worker resolves the active provider from the database for each job.
+- `openai_responses` uses the official `openai` SDK and `client.responses.parse`.
+- `anthropic_messages` uses the official `@anthropic-ai/sdk` and `client.messages.create`.
+- Both adapters use structured output schemas; no provider request body is manually constructed with raw `fetch`.
 
 ### ExportRecord
 
@@ -598,7 +625,8 @@ Migration safeguards:
 
 Initial local-first assumptions:
 
-- API keys must be in environment variables or encrypted local settings, never in client bundles.
+- API keys must be stored in the configuration database and never in client bundles; the settings API returns only `hasApiKey`.
+- `.env` is reserved for infrastructure values such as database and storage paths, not model/provider routing.
 - Source images may contain business-sensitive information; keep storage local unless user configures cloud.
 - Do not log raw image base64 or full provider raw output in console.
 - Redact API keys in settings UI.
