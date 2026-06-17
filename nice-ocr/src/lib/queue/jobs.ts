@@ -1,11 +1,13 @@
 import { prisma } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db/types";
 
 export async function enqueueRecognitionJob(
   documentId: string,
   batchId: string,
   type: "extract" | "second_pass" | "consensus" = "extract",
+  db: DbClient = prisma,
 ) {
-  return prisma.recognitionJob.create({
+  return db.recognitionJob.create({
     data: {
       documentId,
       batchId,
@@ -16,19 +18,23 @@ export async function enqueueRecognitionJob(
   });
 }
 
-export async function enqueueSecondPassIfNeeded(documentId: string, batchId: string) {
-  const existing = await prisma.recognitionJob.count({
+export async function enqueueSecondPassIfNeeded(
+  documentId: string,
+  batchId: string,
+  db: DbClient = prisma,
+) {
+  const existing = await db.recognitionJob.count({
     where: {
       documentId,
       type: "second_pass",
     },
   });
   if (existing > 0) return null;
-  return enqueueRecognitionJob(documentId, batchId, "second_pass");
+  return enqueueRecognitionJob(documentId, batchId, "second_pass", db);
 }
 
-export async function claimNextJob(workerId: string) {
-  const job = await prisma.recognitionJob.findFirst({
+export async function claimNextJob(workerId: string, db: DbClient = prisma) {
+  const job = await db.recognitionJob.findFirst({
     where: {
       status: "queued",
       nextRunAt: { lte: new Date() },
@@ -38,7 +44,7 @@ export async function claimNextJob(workerId: string) {
 
   if (!job) return null;
 
-  return prisma.recognitionJob.update({
+  return db.recognitionJob.update({
     where: { id: job.id },
     data: {
       status: "active",

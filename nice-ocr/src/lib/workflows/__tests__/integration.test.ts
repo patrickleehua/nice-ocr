@@ -1,0 +1,207 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import ExcelJS from "exceljs";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "../../db/client";
+import { enqueueRecognitionJob, enqueueSecondPassIfNeeded, claimNextJob } from "../../queue/jobs";
+import { buildProductExport, buildRecognitionExport } from "../exports";
+import { importLegacyRecognitionRows } from "../import-v5";
+import { rebuildProductLibrary } from "../products";
+import { excludeRecognitionRow, updateRecognitionRow } from "../rows";
+
+const rollback = Symbol("rollback");
+
+async function withRollback<T>(callback: (tx: Prisma.TransactionClient) => Promise<T>) {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await callback(tx);
+      throw rollback;
+    });
+  } catch (error) {
+    if (error !== rollback) throw error;
+  }
+}
+
+async function readWorkbook(buffer: Buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  return workbook;
+}
+
+describe("workflow integration", () => {
+  it("imports legacy rows into batch, documents and normalized recognition rows", async () => {
+    await withRollback(async (tx) => {
+      const result = await importLegacyRecognitionRows(
+        [
+          {
+            image_name: "ticket-a.jpg",
+            image_tag: "A",
+            raw_date: "2024-06-15",
+            code: "1234",
+            name: "合计",
+            unit: "",
+            qty: 2,
+            price: 3,
+            amount: 9,
+          },
+          {
+            image_name: "ticket-a.jpg",
+            raw_date: "2024-06-16",
+            code: "A1001",
+            name: "苹果",
+            unit: "kg",
+            qty: 2,
+            price: 3,
+            amount: 6,
+            status: "已确认",
+          },
+        ],
+        tx,
+      );
+
+      assert.equal(result.documents, 1);
+      assert.equal(result.rows, 2);
+
+      const rows = await tx.recognitionRow.findMany({
+        where: { batchId: result.batch.id },
+        orderBy: { rowIndex: "asc" },
+      });
+
+      assert.equal(rows[0].normalizedMonth, "2024年6月");
+      assert.equal(rows[0].riskLevel, "high");
+      assert.deepEqual(JSON.parse(rows[0].riskReasonsJson), ["INVALID_PRODUCT_NAME", "AMOUNT_MISMATCH"]);
+      assert.equal(rows[1].status, "confirmed");
+    });
+  });
+
+  it("claims queued jobs and prevents duplicate second-pass jobs", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "queue-test" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "queue.jpg",
+          storedPath: "",
+          hash: "queue-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+
+      const job = await enqueueRecognitionJob(document.id, batch.id, "extract", tx);
+      const firstSecondPass = await enqueueSecondPassIfNeeded(document.id, batch.id, tx);
+      const duplicateSecondPass = await enqueueSecondPassIfNeeded(document.id, batch.id, tx);
+      const claimed = await claimNextJob("worker-test", tx);
+
+      assert.equal(firstSecondPass?.type, "second_pass");
+      assert.equal(duplicateSecondPass, null);
+      assert.equal(claimed?.id, job.id);
+      assert.equal(claimed?.status, "active");
+      assert.equal(claimed?.attemptsMade, 1);
+      assert.equal(claimed?.lockedBy, "worker-test");
+    });
+  });
+
+  it("updates rows with audit log and supports soft exclusion", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "row-edit-test" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "row.jpg",
+          storedPath: "",
+          hash: "row-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      const original = await tx.recognitionRow.create({
+        data: {
+          batchId: batch.id,
+          documentId: document.id,
+          rowIndex: 1,
+          name: "苹果",
+          qty: 1,
+          price: 2,
+          amount: 2,
+        },
+      });
+
+      const updated = await updateRecognitionRow(
+        original.id,
+        { name: "合计", qty: 1, price: 2, amount: 3 },
+        tx,
+      );
+      const auditCount = await tx.auditLog.count({
+        where: { entityType: "RecognitionRow", entityId: original.id, action: "update" },
+      });
+      const excluded = await excludeRecognitionRow(original.id, tx);
+
+      assert.equal(updated?.riskLevel, "high");
+      assert.deepEqual(JSON.parse(updated?.riskReasonsJson ?? "[]"), [
+        "INVALID_PRODUCT_NAME",
+        "AMOUNT_MISMATCH",
+      ]);
+      assert.equal(auditCount, 1);
+      assert.equal(excluded.status, "excluded");
+      assert.ok(excluded.deletedAt);
+    });
+  });
+
+  it("rebuilds product library and exports recognition/product workbooks", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "export-test" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "export.jpg",
+          storedPath: "",
+          hash: "export-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      await tx.recognitionRow.createMany({
+        data: [
+          {
+            batchId: batch.id,
+            documentId: document.id,
+            rowIndex: 1,
+            normalizedMonth: "2024年6月",
+            code: "A1001",
+            name: "苹果",
+            unit: "kg",
+            qty: 2,
+            price: 3,
+            amount: 6,
+            status: "confirmed",
+          },
+          {
+            batchId: batch.id,
+            documentId: document.id,
+            rowIndex: 2,
+            normalizedMonth: "2024年6月",
+            code: "",
+            name: "合计",
+            unit: "",
+            qty: 1,
+            price: 1,
+            amount: 1,
+            status: "confirmed",
+          },
+        ],
+      });
+
+      const rebuild = await rebuildProductLibrary({}, tx);
+      const products = await tx.product.findMany({ include: { conflicts: true } });
+      const recognitionWorkbook = await readWorkbook(await buildRecognitionExport(tx));
+      const productWorkbook = await readWorkbook(await buildProductExport(tx));
+
+      assert.equal(rebuild.products, 2);
+      assert.equal(rebuild.conflicts, 1);
+      assert.equal(products.some((product) => product.name === "合计" && product.conflicts.length === 1), true);
+      assert.equal(recognitionWorkbook.getWorksheet("识别结果")?.rowCount, 3);
+      assert.equal(productWorkbook.getWorksheet("副食品资料库")?.rowCount, 3);
+    });
+  });
+});

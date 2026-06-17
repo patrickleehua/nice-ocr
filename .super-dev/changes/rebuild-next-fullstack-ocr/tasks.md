@@ -63,7 +63,7 @@
 ## 6. Quality
 
 - [x] Unit tests for validation and product conflict rules.
-- [ ] Integration tests for import, queue, row edit, product rebuild, export.
+- [x] Integration tests for import, queue, row edit, product rebuild, export.
 - [x] Build passes.
 - [ ] Lint passes.
 - [x] Runtime smoke passes.
