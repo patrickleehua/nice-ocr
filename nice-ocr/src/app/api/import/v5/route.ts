@@ -3,10 +3,30 @@ import { importLegacyRecognitionRows, type LegacyRecognitionRow } from "@/lib/wo
 
 export const runtime = "nodejs";
 
+/**
+ * 编码健壮解码：剥离 UTF-8 BOM，先按 UTF-8 严格解码；失败则按 GB18030 回退，
+ * 兼容旧版中文文件（GBK/GB2312），避免中文乱码。
+ */
+function decodeText(buffer: ArrayBuffer): string {
+  let bytes = new Uint8Array(buffer);
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    bytes = bytes.subarray(3);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder("gb18030").decode(bytes);
+    } catch {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+  }
+}
+
 async function readJsonArray(formData: FormData, key: string) {
   const file = formData.get(key);
   if (!(file instanceof File)) return [];
-  const text = await file.text();
+  const text = decodeText(await file.arrayBuffer());
   const parsed = JSON.parse(text);
   if (!Array.isArray(parsed)) {
     throw new Error(`${key} must be a JSON array`);
