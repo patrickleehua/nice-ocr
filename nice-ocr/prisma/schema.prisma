@@ -105,32 +105,36 @@ model ExtractionAttempt {
 }
 
 model RecognitionRow {
-  id                 String               @id @default(cuid())
-  batchId            String
-  documentId         String
-  canonicalAttemptId String?
-  batch              Batch                @relation(fields: [batchId], references: [id])
-  document           Document             @relation(fields: [documentId], references: [id])
-  canonicalAttempt   ExtractionAttempt?   @relation(fields: [canonicalAttemptId], references: [id])
-  rowIndex           Int
-  rawDate            String?
-  normalizedMonth    String?
-  code               String?
-  name               String
-  unit               String?
-  qty                Float                @default(0)
-  price              Float                @default(0)
-  amount             Float                @default(0)
-  remark             String?
-  status             String               @default("pending")
-  reviewClass        String               @default("pending_review")
-  riskLevel          String               @default("low")
-  riskReasonsJson    String               @default("[]")
-  conflictState      String               @default("none")
-  deletedAt          DateTime?
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  observations       ProductObservation[]
+  id                  String               @id @default(cuid())
+  batchId             String
+  documentId          String
+  canonicalAttemptId  String?
+  batch               Batch                @relation(fields: [batchId], references: [id])
+  document            Document             @relation(fields: [documentId], references: [id])
+  canonicalAttempt    ExtractionAttempt?   @relation(fields: [canonicalAttemptId], references: [id])
+  rowIndex            Int
+  rawDate             String?
+  normalizedMonth     String?
+  code                String?
+  name                String
+  unit                String?
+  qty                 Float                @default(0)
+  price               Float                @default(0)
+  amount              Float                @default(0)
+  remark              String?
+  status              String               @default("pending")
+  reviewClass         String               @default("pending_review")
+  riskLevel           String               @default("low")
+  riskReasonsJson     String               @default("[]")
+  conflictState       String               @default("none")
+  auditState          String               @default("none")
+  auditNote           String?
+  auditSuggestionJson String?
+  auditedAt           DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  observations        ProductObservation[]
 
   @@index([batchId, status])
   @@index([documentId])
@@ -138,6 +142,7 @@ model RecognitionRow {
   @@index([code])
   @@index([name])
   @@index([riskLevel])
+  @@index([auditState])
 }
 
 model ProductObservation {

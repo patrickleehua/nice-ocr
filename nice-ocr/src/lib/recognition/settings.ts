@@ -26,6 +26,9 @@ export interface RecognitionDefaults {
   /** 全局默认识别提示词。 */
   systemPrompt: string;
   userPrompt: string;
+  /** 审核(二次复查)：抽样比例(0..1，对干净 ai_auto 行额外 AI 复核) 与审核 provider。 */
+  auditSampleRate: number;
+  auditProviderKey: string | null;
 }
 
 export interface SafeAiProviderConfig {
@@ -80,6 +83,8 @@ export const recognitionDefaults: RecognitionDefaults = {
   secondaryProviderKey: null,
   systemPrompt: defaultRecognitionPrompts.systemPrompt,
   userPrompt: defaultRecognitionPrompts.userPrompt,
+  auditSampleRate: 0.1,
+  auditProviderKey: null,
 };
 
 const recognitionDefaultsKey = "recognition.defaults";
@@ -279,6 +284,8 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     secondaryProviderKey: normalizePromptString(input.secondaryProviderKey),
     systemPrompt: normalizeOptionalString(input.systemPrompt) ?? recognitionDefaults.systemPrompt,
     userPrompt: normalizeOptionalString(input.userPrompt) ?? recognitionDefaults.userPrompt,
+    auditSampleRate: clampNumber(input.auditSampleRate, 0, 1, recognitionDefaults.auditSampleRate),
+    auditProviderKey: normalizePromptString(input.auditProviderKey),
   };
 }
 
