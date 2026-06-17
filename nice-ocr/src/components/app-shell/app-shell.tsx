@@ -76,9 +76,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-app text-foreground">
-      <aside className="hidden w-60 shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:block">
-        <div className="flex h-14 items-center gap-2 border-b border-sidebar-border px-4">
+    <div className="flex h-screen overflow-hidden bg-app text-foreground">
+      <aside className="hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex">
+        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-sidebar-border px-4">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
             N
           </div>
@@ -117,7 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
       </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4">
           <div className="flex min-w-0 items-center gap-3">
             <select
@@ -163,7 +163,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Button>
           </div>
         </header>
-        <main className="min-w-0 flex-1 px-4 py-4">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4">{children}</main>
       </div>
     </div>
   );
