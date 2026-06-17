@@ -1,14 +1,14 @@
 "use client";
 
-import { Download, Edit3, Filter, RotateCcw, Trash2 } from "lucide-react";
+import { Download, Filter, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { EditableCell } from "@/components/ui/editable-cell";
 import { formatCurrency } from "@/lib/utils";
-import { EditRowDrawer } from "@/components/dialogs/action-dialogs";
 import { apiDownload, apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
@@ -68,7 +68,6 @@ const PAGE_SIZE = 50;
 export function ResultsPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState<RecognitionRow | undefined>();
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     status: "",
@@ -99,13 +98,14 @@ export function ResultsPage() {
   };
 
   const updateRow = useMutation({
-    mutationFn: (payload: Partial<RecognitionRow>) =>
-      apiJson(apiPaths.row(editing?.id as string), { method: "PATCH", body: JSON.stringify(payload) }),
-    onSuccess: () => {
-      setEditing(undefined);
-      invalidate();
-    },
+    mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
+      apiJson(apiPaths.row(id), { method: "PATCH", body: JSON.stringify(patch) }),
+    onSuccess: invalidate,
   });
+  function commitField(id: string, field: "code" | "name" | "unit" | "qty" | "price" | "amount", raw: string) {
+    const numeric = field === "qty" || field === "price" || field === "amount";
+    updateRow.mutate({ id, patch: { [field]: numeric ? Number(raw || 0) : raw } });
+  }
   const confirmRow = useMutation({
     mutationFn: (id: string) =>
       apiJson(apiPaths.rowsBulkConfirm, { method: "POST", body: JSON.stringify({ rowIds: [id] }) }),
@@ -207,12 +207,38 @@ export function ResultsPage() {
                   <td className={tableCellClass}>{row.batchName}</td>
                   <td className={tableCellClass}>{row.documentName}</td>
                   <td className={tableCellClass}>{row.month || "-"}</td>
-                  <td className={tableCellClass}>{row.code || "-"}</td>
-                  <td className={tableCellClass}>{row.name}</td>
-                  <td className={tableCellClass}>{row.unit || "-"}</td>
-                  <td className={tableCellClass}>{row.qty.toFixed(2)}</td>
-                  <td className={tableCellClass}>{formatCurrency(row.price)}</td>
-                  <td className={tableCellClass}>{formatCurrency(row.amount)}</td>
+                  <EditableCell
+                    value={row.code}
+                    format={(value) => (value ? String(value) : "-")}
+                    onCommit={(next) => commitField(row.id, "code", next)}
+                  />
+                  <EditableCell value={row.name} onCommit={(next) => commitField(row.id, "name", next)} />
+                  <EditableCell
+                    value={row.unit}
+                    format={(value) => (value ? String(value) : "-")}
+                    onCommit={(next) => commitField(row.id, "unit", next)}
+                  />
+                  <EditableCell
+                    value={row.qty}
+                    type="number"
+                    align="right"
+                    format={(value) => Number(value ?? 0).toFixed(2)}
+                    onCommit={(next) => commitField(row.id, "qty", next)}
+                  />
+                  <EditableCell
+                    value={row.price}
+                    type="number"
+                    align="right"
+                    format={(value) => formatCurrency(Number(value ?? 0))}
+                    onCommit={(next) => commitField(row.id, "price", next)}
+                  />
+                  <EditableCell
+                    value={row.amount}
+                    type="number"
+                    align="right"
+                    format={(value) => formatCurrency(Number(value ?? 0))}
+                    onCommit={(next) => commitField(row.id, "amount", next)}
+                  />
                   <td className={tableCellClass}><RiskBadge risk={row.risk} /></td>
                   <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
                   <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
@@ -226,9 +252,6 @@ export function ResultsPage() {
                         disabled={confirmRow.isPending || row.status === "confirmed"}
                       >
                         确认
-                      </Button>
-                      <Button size="icon" variant="ghost" aria-label="编辑行" onClick={() => setEditing(row)}>
-                        <Edit3 size={15} />
                       </Button>
                       <Button
                         size="icon"
@@ -272,12 +295,6 @@ export function ResultsPage() {
           </div>
         </div>
       </TableWrap>
-      <EditRowDrawer
-        row={editing}
-        open={Boolean(editing)}
-        onClose={() => setEditing(undefined)}
-        onSubmit={(payload) => updateRow.mutate(payload)}
-      />
     </div>
   );
 }

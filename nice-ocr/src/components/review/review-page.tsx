@@ -1,12 +1,14 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, Search, ZoomIn, ZoomOut } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { ApprovalModeBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
+import { EditableCell } from "@/components/ui/editable-cell";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
 import { apiGet, apiJson } from "@/lib/api/client";
@@ -48,14 +50,41 @@ interface ApiDocument {
   attempts: ApiAttempt[];
 }
 
+type ReviewState = "pending" | "partial" | "confirmed" | "conflict";
+
+interface BatchDoc {
+  id: string;
+  originalName: string;
+  riskLevel: RiskLevel;
+  reviewState: ReviewState;
+  rowStats: { total: number; confirmed: number; conflict: number };
+}
+
 interface BatchDetail {
   batch: {
     id: string;
     name: string;
     approvalMode: string;
-    documents: Array<{ id: string; originalName: string; riskLevel: RiskLevel }>;
+    documents: BatchDoc[];
   };
 }
+
+const docStateBadge: Record<ReviewState, { label: string; tone: "warning" | "info" | "success" | "danger" }> = {
+  pending: { label: "待复核", tone: "warning" },
+  partial: { label: "部分确认", tone: "info" },
+  confirmed: { label: "已确认", tone: "success" },
+  conflict: { label: "冲突", tone: "danger" },
+};
+
+const docFilters: Array<{ key: ReviewState | "all"; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "pending", label: "待复核" },
+  { key: "partial", label: "部分确认" },
+  { key: "confirmed", label: "已确认" },
+  { key: "conflict", label: "冲突" },
+];
+
+const DOC_PAGE_SIZE = 8;
 
 export function ReviewPage() {
   const queryClient = useQueryClient();
@@ -63,6 +92,9 @@ export function ReviewPage() {
   const [override, setOverride] = useState<string | null>(null);
   const [imageErrorId, setImageErrorId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [docSearch, setDocSearch] = useState("");
+  const [docFilter, setDocFilter] = useState<ReviewState | "all">("all");
+  const [docPage, setDocPage] = useState(1);
 
   function selectDoc(id: string) {
     setOverride(id);
@@ -94,14 +126,28 @@ export function ReviewPage() {
   const document = docData?.document;
   const rows = document?.rows ?? [];
 
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
+    queryClient.invalidateQueries({ queryKey: ["batch", activeBatchId] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+
   const confirmRows = useMutation({
     mutationFn: (payload: { rowIds?: string[]; documentId?: string }) =>
       apiJson(apiPaths.rowsBulkConfirm, { method: "POST", body: JSON.stringify(payload) }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-    },
+    onSuccess: invalidate,
   });
+
+  const updateRow = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
+      apiJson(apiPaths.row(id), { method: "PATCH", body: JSON.stringify(patch) }),
+    onSuccess: invalidate,
+  });
+
+  function commitField(id: string, field: "code" | "name" | "unit" | "qty" | "price" | "amount", raw: string) {
+    const numeric = field === "qty" || field === "price" || field === "amount";
+    updateRow.mutate({ id, patch: { [field]: numeric ? Number(raw || 0) : raw } });
+  }
 
   function goTo(offset: number) {
     if (selectedIndex < 0) return;
@@ -115,6 +161,15 @@ export function ReviewPage() {
   if (!documents.length) {
     return <EmptyState message="当前批次还没有文档，请先上传单据。" />;
   }
+
+  const filteredDocs = documents.filter((doc) => {
+    const matchesSearch = docSearch ? doc.originalName.toLowerCase().includes(docSearch.toLowerCase()) : true;
+    const matchesFilter = docFilter === "all" ? true : doc.reviewState === docFilter;
+    return matchesSearch && matchesFilter;
+  });
+  const docTotalPages = Math.max(1, Math.ceil(filteredDocs.length / DOC_PAGE_SIZE));
+  const safeDocPage = Math.min(docPage, docTotalPages);
+  const pagedDocs = filteredDocs.slice((safeDocPage - 1) * DOC_PAGE_SIZE, safeDocPage * DOC_PAGE_SIZE);
 
   const riskReasons: string[] = (() => {
     try {
@@ -132,7 +187,7 @@ export function ReviewPage() {
             <h1 className="text-xl font-semibold">审核工作台</h1>
             {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">左侧查看原图（可缩放），右侧核对识别结果并标注审核类别。</p>
+          <p className="mt-1 text-sm text-muted-foreground">左侧原图可缩放、文档可过滤；右侧点击单元格即可直接修改识别结果。</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="secondary" onClick={() => goTo(-1)} disabled={selectedIndex <= 0}>
@@ -177,7 +232,7 @@ export function ReviewPage() {
             <span className="ml-auto text-[11px] text-muted-foreground">Ctrl+滚轮缩放</span>
           </div>
           <div
-            className="flex min-h-[430px] flex-1 items-start justify-center overflow-auto bg-muted p-4"
+            className="flex min-h-[360px] flex-1 items-start justify-center overflow-auto bg-muted p-4"
             onWheel={(event) => {
               if (!event.ctrlKey) return;
               event.preventDefault();
@@ -201,22 +256,84 @@ export function ReviewPage() {
               </div>
             )}
           </div>
-          <div className="border-t border-border p-3">
-            <div className="flex gap-2 overflow-x-auto">
-              {documents.map((doc) => (
+
+          <div className="flex flex-col gap-2 border-t border-border p-3">
+            <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2 text-sm">
+              <Search size={14} className="text-muted-foreground" />
+              <input
+                value={docSearch}
+                onChange={(event) => {
+                  setDocSearch(event.target.value);
+                  setDocPage(1);
+                }}
+                placeholder="按文件名筛选文档"
+                className="h-full flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {docFilters.map((filter) => (
                 <button
-                  key={doc.id}
-                  onClick={() => selectDoc(doc.id)}
-                  className={`w-28 shrink-0 rounded-md border p-1 text-left ${
-                    doc.id === selectedId ? "border-primary" : "border-border"
-                  } bg-surface`}
+                  key={filter.key}
+                  onClick={() => {
+                    setDocFilter(filter.key);
+                    setDocPage(1);
+                  }}
+                  className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                    docFilter === filter.key
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-surface text-muted-foreground hover:bg-muted"
+                  }`}
                 >
-                  <div className="flex h-16 items-center justify-center rounded bg-muted text-[11px] text-muted-foreground">
-                    预览
-                  </div>
-                  <div className="mt-1 truncate text-[11px]">{doc.originalName}</div>
+                  {filter.label}
                 </button>
               ))}
+            </div>
+            <div className="max-h-56 space-y-1 overflow-auto">
+              {pagedDocs.length ? (
+                pagedDocs.map((doc) => {
+                  const badge = docStateBadge[doc.reviewState];
+                  return (
+                    <button
+                      key={doc.id}
+                      onClick={() => selectDoc(doc.id)}
+                      className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
+                        doc.id === selectedId ? "border-primary bg-primary/5" : "border-border bg-surface hover:bg-muted"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium">{doc.originalName}</span>
+                        <Badge tone={badge.tone}>{badge.label}</Badge>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
+                        <RiskBadge risk={doc.riskLevel} />
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="px-2 py-4 text-center text-xs text-muted-foreground">没有符合条件的文档</div>
+              )}
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>共 {filteredDocs.length} 个文档</span>
+              <div className="flex items-center gap-1">
+                <button
+                  className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+                  onClick={() => setDocPage((current) => Math.max(1, current - 1))}
+                  disabled={safeDocPage <= 1}
+                >
+                  上一页
+                </button>
+                <span>{safeDocPage} / {docTotalPages}</span>
+                <button
+                  className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+                  onClick={() => setDocPage((current) => Math.min(docTotalPages, current + 1))}
+                  disabled={safeDocPage >= docTotalPages}
+                >
+                  下一页
+                </button>
+              </div>
             </div>
           </div>
         </Panel>
@@ -225,9 +342,9 @@ export function ReviewPage() {
           <Panel>
             <PanelHeader>
               <PanelTitle>识别明细</PanelTitle>
-              <span className="text-xs text-muted-foreground">{rows.length} 行</span>
+              <span className="text-xs text-muted-foreground">{rows.length} 行 · 点击单元格可编辑</span>
             </PanelHeader>
-            <div className="max-h-[315px] overflow-auto">
+            <div className="max-h-[360px] overflow-auto">
               <DataTable>
                 <thead className={tableHeadClass}>
                   <tr>
@@ -246,14 +363,40 @@ export function ReviewPage() {
                 <tbody>
                   {rows.length ? (
                     rows.map((row, index) => (
-                      <tr key={row.id} className="hover:bg-muted/70">
+                      <tr key={row.id} className="hover:bg-muted/40">
                         <td className={tableCellClass}>{index + 1}</td>
-                        <td className={tableCellClass}>{row.code || "-"}</td>
-                        <td className={tableCellClass}>{row.name}</td>
-                        <td className={tableCellClass}>{row.unit || "-"}</td>
-                        <td className={tableCellClass}>{Number(row.qty).toFixed(2)}</td>
-                        <td className={tableCellClass}>{formatCurrency(Number(row.price))}</td>
-                        <td className={tableCellClass}>{formatCurrency(Number(row.amount))}</td>
+                        <EditableCell
+                          value={row.code ?? ""}
+                          format={(value) => (value ? String(value) : "-")}
+                          onCommit={(next) => commitField(row.id, "code", next)}
+                        />
+                        <EditableCell value={row.name} onCommit={(next) => commitField(row.id, "name", next)} />
+                        <EditableCell
+                          value={row.unit ?? ""}
+                          format={(value) => (value ? String(value) : "-")}
+                          onCommit={(next) => commitField(row.id, "unit", next)}
+                        />
+                        <EditableCell
+                          value={row.qty}
+                          type="number"
+                          align="right"
+                          format={(value) => Number(value ?? 0).toFixed(2)}
+                          onCommit={(next) => commitField(row.id, "qty", next)}
+                        />
+                        <EditableCell
+                          value={row.price}
+                          type="number"
+                          align="right"
+                          format={(value) => formatCurrency(Number(value ?? 0))}
+                          onCommit={(next) => commitField(row.id, "price", next)}
+                        />
+                        <EditableCell
+                          value={row.amount}
+                          type="number"
+                          align="right"
+                          format={(value) => formatCurrency(Number(value ?? 0))}
+                          onCommit={(next) => commitField(row.id, "amount", next)}
+                        />
                         <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
                         <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
                         <td className={tableCellClass}>
@@ -311,7 +454,7 @@ export function ReviewPage() {
             </PanelHeader>
             <div className="space-y-2 p-4 text-sm">
               <div>风险原因：{riskReasons.length ? riskReasons.join("、") : "无"}</div>
-              <div className="text-muted-foreground">建议：核对原图与识别明细，确认或修正后逐行确认。</div>
+              <div className="text-muted-foreground">建议：核对原图与识别明细，点击单元格修正后逐行确认。</div>
               <Button size="sm" variant="primary" onClick={() => setRiskOpen(true)}>查看风险说明</Button>
             </div>
           </Panel>
