@@ -24,7 +24,7 @@
 - [x] Implement Import page.
 - [x] Implement Settings page.
 - [x] Implement common drawers/dialogs: create batch, edit row, confirm action, risk details.
-- [ ] Run frontend build/lint/runtime smoke.
+- [x] Run frontend build/lint/runtime smoke.
 - [ ] Stop for preview confirmation.
 
 ## 3. Backend and Data
@@ -64,8 +64,8 @@
 
 - [x] Unit tests for validation and product conflict rules.
 - [ ] Integration tests for import, queue, row edit, product rebuild, export.
-- [ ] Build passes.
+- [x] Build passes.
 - [ ] Lint passes.
-- [ ] Runtime smoke passes.
+- [x] Runtime smoke passes.
 - [x] Source scan confirms no emoji UI icons.
 - [ ] Delivery proof-pack summarized.
