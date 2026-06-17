@@ -580,3 +580,45 @@ Frontend-first implementation should start with:
 7. Settings/provider form.
 
 Then connect backend and worker.
+
+## 13. Revision — UI Refine & Config Pass (2026-06-17)
+
+User feedback after live use. These supersede earlier wording where they conflict.
+
+### 13.1 App shell: fixed chrome, scroll only the data region
+
+- The shell occupies exactly the viewport height (`h-screen`, `overflow-hidden` at the root).
+- Left sidebar is fixed (does not scroll away with content) and has its own internal scroll if nav grows.
+- The right column splits into a fixed top header (batch switch, search, queue status, upload) and a scrollable content area below it.
+- Only the content area scrolls. Long tables/lists scroll inside the content region; the sidebar and header stay put.
+- Tables keep their sticky header so column titles remain visible while scrolling rows.
+
+### 13.2 Inline editing (replaces edit drawer/dialog)
+
+- Both the review workbench detail table and the全部结果 table support click-to-edit on the cell.
+- Editable fields: 产品编码 / 产品名称 / 单位 / 数量 / 单价 / 金额. Click a cell → inline input; Enter or blur commits via `PATCH /api/rows/:id`; Esc cancels.
+- After commit, the row re-validates risk on the backend and the view refreshes; no modal.
+- The popup `EditRowDrawer` form is removed from the results flow (kept only as a fallback component, not wired).
+- Inline editing is implemented once as a shared cell component reused by both pages.
+
+### 13.3 Review document selector: visual, filterable, paginated
+
+- The bottom thumbnail strip is replaced with a compact document list that scales to hundreds of files per batch.
+- Each item shows file name + a status badge (待复核 / 部分确认 / 已确认 / 冲突) derived from its rows, plus risk.
+- Status filter chips (全部 / 待复核 / 已确认 / 冲突) and a name search narrow the list so reviewers can see at a glance what is done vs. pending.
+- The list paginates client-side (page through, fixed page size) and scrolls within a fixed-height panel.
+
+### 13.4 Pagination on all large lists
+
+- 全部结果 already server-paginated; extend the same pattern to 批次管理 / 产品库 / 冲突管理 (server-side `page`/`pageSize`, search/status pushed to the API).
+- Keep it simple — page-number + prev/next footer matching the results table; no infinite scroll, no virtualization unless needed. (Avoid over-engineering.)
+
+### 13.5 Configurable recognition: prompts + dual-model cross-check
+
+- OCR prompt is configurable. A global default system/user prompt lives in settings; each provider may override its own system/user prompt (empty = inherit global). No hardcoded prompt in code.
+- Multi-model "free pairing" lands as **dual-model cross-verification**: the two consensus passes use two different models — pass1 = primary provider, pass2 = secondary provider. Agreement across two different models is the bar for AI auto-approval (reuses the existing consensus logic).
+- Primary/secondary models are chosen as a global default in settings and can be overridden per batch. If no secondary is set, the system degrades gracefully to using the primary for both passes.
+
+### 13.6 Import encoding
+
+- v5 JSON import must be encoding-robust: strip a UTF-8 BOM, decode UTF-8 strictly, and fall back to GB18030 for legacy Chinese files so 中文 never renders as mojibake. Uploaded image file names must also display their original Chinese characters intact.

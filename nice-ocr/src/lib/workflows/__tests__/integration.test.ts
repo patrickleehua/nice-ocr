@@ -10,6 +10,8 @@ import { rebuildProductLibrary } from "../products";
 import { confirmRecognitionRows, excludeRecognitionRow, updateRecognitionRow } from "../rows";
 import { resolveProductConflict } from "../conflicts";
 import { buildConsensusFlags, decideRowReview } from "../../recognition/review";
+import { resolveProviderPrompts } from "../../recognition/provider";
+import { defaultRecognitionPrompts } from "../../recognition/settings";
 
 const rollback = Symbol("rollback");
 
@@ -325,5 +327,28 @@ describe("review decisions", () => {
       { code: "", name: "牛奶", qty: 1, price: 8, amount: 8 }, // 单价/金额不一致 → 不匹配
     ];
     assert.deepEqual(buildConsensusFlags(a, b), [true, true, false]);
+  });
+});
+
+describe("provider prompts", () => {
+  it("prefers provider override, then global default, then built-in", () => {
+    // provider 覆盖优先。
+    assert.deepEqual(
+      resolveProviderPrompts(
+        { systemPrompt: "S-OVR", userPrompt: "U-OVR" },
+        { systemPrompt: "S-G", userPrompt: "U-G" },
+      ),
+      { systemPrompt: "S-OVR", userPrompt: "U-OVR" },
+    );
+    // provider 空白/为空 → 回退全局默认。
+    assert.deepEqual(
+      resolveProviderPrompts({ systemPrompt: "   ", userPrompt: null }, { systemPrompt: "S-G", userPrompt: "U-G" }),
+      { systemPrompt: "S-G", userPrompt: "U-G" },
+    );
+    // provider 与全局都空 → 内置默认。
+    assert.deepEqual(resolveProviderPrompts({}, {}), {
+      systemPrompt: defaultRecognitionPrompts.systemPrompt,
+      userPrompt: defaultRecognitionPrompts.userPrompt,
+    });
   });
 });
