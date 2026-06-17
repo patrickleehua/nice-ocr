@@ -39,6 +39,11 @@ export async function confirmRecognitionRows(selector: ConfirmSelector, db: DbCl
     where,
     data: { status: "confirmed", reviewClass: "human" },
   });
+  // 人工确认即视为已复审：把这批中仍为 flagged 的行置 reviewed，使其离开复审队列。
+  await db.recognitionRow.updateMany({
+    where: { ...where, auditState: "flagged" },
+    data: { auditState: "reviewed" },
+  });
   return result.count;
 }
 
@@ -81,6 +86,8 @@ export async function updateRecognitionRow(
       remark: input.remark ?? undefined,
       riskLevel: validation.riskLevel,
       riskReasonsJson: JSON.stringify(validation.reasons),
+      // 人工编辑待复审行即视为已复审。
+      ...(before.auditState === "flagged" ? { auditState: "reviewed" } : {}),
     },
   });
 

@@ -8,6 +8,8 @@ export const apiPaths = {
   batches: "/api/batches",
   batch: (id: string) => `/api/batches/${id}`,
   batchUpload: (id: string) => `/api/batches/${id}/upload`,
+  batchAudit: (id: string) => `/api/batches/${id}/audit`,
+  documentAudit: (id: string) => `/api/documents/${id}/audit`,
   rows: "/api/rows",
   row: (id: string) => `/api/rows/${id}`,
   rowsBulkConfirm: "/api/rows/bulk-confirm",

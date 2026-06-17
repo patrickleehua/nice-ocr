@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     ...(searchParams.get("batchId") ? { batchId: searchParams.get("batchId") as string } : {}),
     ...(searchParams.get("status") ? { status: searchParams.get("status") as string } : {}),
     ...(searchParams.get("risk") ? { riskLevel: searchParams.get("risk") as string } : {}),
+    ...(searchParams.get("auditState") ? { auditState: searchParams.get("auditState") as string } : {}),
     ...(searchParams.get("month") ? { normalizedMonth: searchParams.get("month") as string } : {}),
     ...(searchParams.get("code") ? { code: { contains: searchParams.get("code") as string } } : {}),
     ...(searchParams.get("name") ? { name: { contains: searchParams.get("name") as string } } : {}),

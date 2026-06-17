@@ -25,6 +25,7 @@ export async function GET() {
     conflicts,
     autoApprovedRows,
     humanConfirmedRows,
+    flaggedRows,
     activeBatch,
     recentFailures,
     openConflicts,
@@ -37,6 +38,7 @@ export async function GET() {
     prisma.productConflict.count({ where: { status: "open" } }),
     prisma.recognitionRow.count({ where: { deletedAt: null, reviewClass: "ai_auto" } }),
     prisma.recognitionRow.count({ where: { deletedAt: null, reviewClass: "human" } }),
+    prisma.recognitionRow.count({ where: { deletedAt: null, auditState: "flagged" } }),
     prisma.batch.findFirst({
       orderBy: { createdAt: "desc" },
       include: { _count: { select: { documents: true, rows: true } } },
@@ -80,6 +82,7 @@ export async function GET() {
       autoApprovedRows,
       humanConfirmedRows,
       autoApprovalRate,
+      flaggedRows,
     },
     activeBatch: activeBatch
       ? {
