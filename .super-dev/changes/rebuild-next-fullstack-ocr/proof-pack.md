@@ -29,6 +29,7 @@ pnpm db:push
 pnpm db:seed
 pnpm test
 pnpm build
+pnpm lint
 ```
 
 Result: all commands completed without errors on Windows.
@@ -37,7 +38,7 @@ Quality notes:
 
 - `pnpm test` covers validation rules, product conflict rules, and workflow integration paths for v5 import, queue claim, duplicate second-pass prevention, row edit audit, row exclusion, product rebuild, and Excel exports.
 - `pnpm build` passed after Prisma 7 SQLite adapter fixes.
-- `pnpm lint` remains to be validated on Windows because WSL execution is intentionally avoided for this project.
+- `pnpm lint` passed on Windows.
 
 ## Relevant Commits
 
@@ -49,8 +50,8 @@ Quality notes:
 - `536b843 fix: load env for prisma scripts`
 - `669b131 fix: lock prisma sqlite adapter deps`
 - `bc9bc8a feat: add workflow integration coverage`
+- `d15272b feat: summarize delivery proof pack`
 
 ## Pending Gates
 
 - Preview confirmation for the running UI.
-- Windows lint validation with `pnpm lint`.

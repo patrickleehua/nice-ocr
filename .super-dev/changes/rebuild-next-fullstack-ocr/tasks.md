@@ -65,7 +65,7 @@
 - [x] Unit tests for validation and product conflict rules.
 - [x] Integration tests for import, queue, row edit, product rebuild, export.
 - [x] Build passes.
-- [ ] Lint passes.
+- [x] Lint passes.
 - [x] Runtime smoke passes.
 - [x] Source scan confirms no emoji UI icons.
 - [x] Delivery proof-pack summarized.
