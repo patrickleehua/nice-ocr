@@ -4,11 +4,38 @@ import type { AiProviderConfig } from "@prisma/client";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { extractionResultSchema, normalizeExtraction } from "@/lib/recognition/schema";
-import { getActiveAiProviderConfig, type ProviderProtocol } from "@/lib/recognition/settings";
+import {
+  defaultRecognitionPrompts,
+  getActiveAiProviderConfig,
+  type ProviderProtocol,
+} from "@/lib/recognition/settings";
 
 export interface RecognitionInput {
   imageBase64: string;
   mimeType: string;
+}
+
+/** 一次识别使用的提示词（system + user）。 */
+export interface ProviderPrompts {
+  systemPrompt: string;
+  userPrompt: string;
+}
+
+/** provider 覆盖优先，其次全局默认，最后内置默认。空白视为未设置。 */
+export function resolveProviderPrompts(
+  config: { systemPrompt?: string | null; userPrompt?: string | null },
+  defaults?: { systemPrompt?: string | null; userPrompt?: string | null },
+): ProviderPrompts {
+  return {
+    systemPrompt:
+      config.systemPrompt?.trim() ||
+      defaults?.systemPrompt?.trim() ||
+      defaultRecognitionPrompts.systemPrompt,
+    userPrompt:
+      config.userPrompt?.trim() ||
+      defaults?.userPrompt?.trim() ||
+      defaultRecognitionPrompts.userPrompt,
+  };
 }
 
 export type NormalizedExtraction = ReturnType<typeof normalizeExtraction>;
@@ -29,19 +56,20 @@ export interface RecognitionProvider {
   recognize(input: RecognitionInput): Promise<RecognitionProviderResult>;
 }
 
-const extractionPrompt =
-  "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。";
-
 export async function createConfiguredRecognitionProvider() {
-  return createRecognitionProvider(await getActiveAiProviderConfig());
+  const config = await getActiveAiProviderConfig();
+  return createRecognitionProvider(config, resolveProviderPrompts(config));
 }
 
-export function createRecognitionProvider(config: AiProviderConfig): RecognitionProvider {
+export function createRecognitionProvider(
+  config: AiProviderConfig,
+  prompts: ProviderPrompts = resolveProviderPrompts(config),
+): RecognitionProvider {
   if (config.protocol === "openai_responses") {
-    return new OpenAIResponsesProvider(config);
+    return new OpenAIResponsesProvider(config, prompts);
   }
   if (config.protocol === "anthropic_messages") {
-    return new AnthropicMessagesProvider(config);
+    return new AnthropicMessagesProvider(config, prompts);
   }
   throw new Error(`Unsupported AI provider protocol: ${config.protocol}`);
 }
@@ -52,10 +80,12 @@ class OpenAIResponsesProvider implements RecognitionProvider {
   model: string;
   private client: OpenAI;
   private config: AiProviderConfig;
+  private prompts: ProviderPrompts;
 
-  constructor(config: AiProviderConfig) {
+  constructor(config: AiProviderConfig, prompts: ProviderPrompts) {
     assertApiKey(config);
     this.config = config;
+    this.prompts = prompts;
     this.key = config.providerKey;
     this.model = config.model;
     this.client = new OpenAI({
@@ -71,7 +101,8 @@ class OpenAIResponsesProvider implements RecognitionProvider {
         {
           role: "user",
           content: [
-            { type: "input_text", text: extractionPrompt },
+            { type: "input_text", text: this.prompts.systemPrompt },
+            { type: "input_text", text: this.prompts.userPrompt },
             {
               type: "input_image",
               image_url: `data:${input.mimeType};base64,${input.imageBase64}`,
@@ -105,10 +136,12 @@ class AnthropicMessagesProvider implements RecognitionProvider {
   model: string;
   private client: Anthropic;
   private config: AiProviderConfig;
+  private prompts: ProviderPrompts;
 
-  constructor(config: AiProviderConfig) {
+  constructor(config: AiProviderConfig, prompts: ProviderPrompts) {
     assertApiKey(config);
     this.config = config;
+    this.prompts = prompts;
     this.key = config.providerKey;
     this.model = config.model;
     this.client = new Anthropic({
@@ -122,7 +155,7 @@ class AnthropicMessagesProvider implements RecognitionProvider {
       model: this.config.model,
       max_tokens: this.config.maxOutputTokens,
       ...(this.config.temperature == null ? {} : { temperature: this.config.temperature }),
-      system: extractionPrompt,
+      system: this.prompts.systemPrompt,
       messages: [
         {
           role: "user",
@@ -137,7 +170,7 @@ class AnthropicMessagesProvider implements RecognitionProvider {
             },
             {
               type: "text",
-              text: "请抽取这张单据图片中的日期和所有表格明细行。",
+              text: this.prompts.userPrompt,
             },
           ],
         },

@@ -5,10 +5,12 @@ import path from "node:path";
 import { prisma } from "@/lib/db/client";
 import { env } from "@/lib/env";
 import {
-  createConfiguredRecognitionProvider,
+  createRecognitionProvider,
+  resolveProviderPrompts,
   type RecognitionProvider,
   type RecognitionProviderResult,
 } from "@/lib/recognition/provider";
+import { resolveRecognitionProviders } from "@/lib/recognition/settings";
 import { claimNextJob } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
 import {
@@ -65,18 +67,25 @@ async function processOne() {
   if (!job) return false;
 
   try {
-    const provider = await createConfiguredRecognitionProvider();
     const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
     const mode = normalizeApprovalMode(job.batch.approvalMode);
 
-    // 第一次识别（canonical 结果）。
-    const first = await recognizePass(provider, job, imageBase64, 1);
+    // 双模型交叉验证：pass1 主模型、pass2 副模型（提示词按 provider 覆盖，回退全局默认）。
+    const { primary, secondary, defaults } = await resolveRecognitionProviders(job.batch);
+    const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary, defaults));
+
+    // 第一次识别（canonical 结果，主模型）。
+    const first = await recognizePass(primaryProvider, job, imageBase64, 1);
     const canonicalRows = first.result.extraction.rows;
 
-    // hybrid / auto 需要第二次识别做一致性比对。
+    // hybrid / auto 需要第二次识别做一致性比对（副模型，缺省时退化为主模型）。
     let consensusFlags = canonicalRows.map(() => false);
     if (requiresConsensus(mode)) {
-      const second = await recognizePass(provider, job, imageBase64, 2);
+      const secondaryProvider =
+        secondary.id === primary.id
+          ? primaryProvider
+          : createRecognitionProvider(secondary, resolveProviderPrompts(secondary, defaults));
+      const second = await recognizePass(secondaryProvider, job, imageBase64, 2);
       consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows);
     }
 
@@ -131,7 +140,7 @@ async function processOne() {
     });
 
     console.log(
-      `${workerId} done doc=${job.documentId} mode=${mode} rows=${canonicalRows.length} auto=${autoApproved}`,
+      `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.providerKey} secondary=${secondary.providerKey} rows=${canonicalRows.length} auto=${autoApproved}`,
     );
     return true;
   } catch (error) {

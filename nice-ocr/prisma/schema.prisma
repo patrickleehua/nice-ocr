@@ -7,18 +7,20 @@ datasource db {
 }
 
 model Batch {
-  id               String           @id @default(cuid())
-  name             String
-  notes            String?
-  status           String           @default("draft")
-  strategy         String           @default("balanced")
-  approvalMode     String           @default("hybrid")
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  documents        Document[]
-  jobs             RecognitionJob[]
-  rows             RecognitionRow[]
-  exports          ExportRecord[]
+  id                   String           @id @default(cuid())
+  name                 String
+  notes                String?
+  status               String           @default("draft")
+  strategy             String           @default("balanced")
+  approvalMode         String           @default("hybrid")
+  primaryProviderKey   String?
+  secondaryProviderKey String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  documents            Document[]
+  jobs                 RecognitionJob[]
+  rows                 RecognitionRow[]
+  exports              ExportRecord[]
 
   @@index([status])
   @@index([createdAt])
@@ -76,59 +78,59 @@ model RecognitionJob {
 }
 
 model ExtractionAttempt {
-  id              String         @id @default(cuid())
-  documentId      String
-  jobId           String?
-  document        Document       @relation(fields: [documentId], references: [id])
-  job             RecognitionJob? @relation(fields: [jobId], references: [id])
-  providerKey     String
-  model           String
-  promptVersion   String
-  schemaVersion   String
-  strategy        String
-  status          String
-  rawOutputPath   String?
-  parsedJson      String?
-  validationJson  String?
-  tokenUsageJson  String?
-  costEstimate    Float?
-  latencyMs       Int?
-  startedAt       DateTime       @default(now())
-  completedAt     DateTime?
-  error           String?
-  rows            RecognitionRow[]
+  id             String           @id @default(cuid())
+  documentId     String
+  jobId          String?
+  document       Document         @relation(fields: [documentId], references: [id])
+  job            RecognitionJob?  @relation(fields: [jobId], references: [id])
+  providerKey    String
+  model          String
+  promptVersion  String
+  schemaVersion  String
+  strategy       String
+  status         String
+  rawOutputPath  String?
+  parsedJson     String?
+  validationJson String?
+  tokenUsageJson String?
+  costEstimate   Float?
+  latencyMs      Int?
+  startedAt      DateTime         @default(now())
+  completedAt    DateTime?
+  error          String?
+  rows           RecognitionRow[]
 
   @@index([documentId, status])
   @@index([providerKey, model])
 }
 
 model RecognitionRow {
-  id                String             @id @default(cuid())
-  batchId           String
-  documentId        String
+  id                 String               @id @default(cuid())
+  batchId            String
+  documentId         String
   canonicalAttemptId String?
-  batch             Batch              @relation(fields: [batchId], references: [id])
-  document          Document           @relation(fields: [documentId], references: [id])
-  canonicalAttempt  ExtractionAttempt? @relation(fields: [canonicalAttemptId], references: [id])
-  rowIndex          Int
-  rawDate           String?
-  normalizedMonth   String?
-  code              String?
-  name              String
-  unit              String?
-  qty               Float              @default(0)
-  price             Float              @default(0)
-  amount            Float              @default(0)
-  remark            String?
-  status            String             @default("pending")
-  reviewClass       String             @default("pending_review")
-  riskLevel         String             @default("low")
-  riskReasonsJson   String             @default("[]")
-  conflictState     String             @default("none")
-  deletedAt         DateTime?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  observations      ProductObservation[]
+  batch              Batch                @relation(fields: [batchId], references: [id])
+  document           Document             @relation(fields: [documentId], references: [id])
+  canonicalAttempt   ExtractionAttempt?   @relation(fields: [canonicalAttemptId], references: [id])
+  rowIndex           Int
+  rawDate            String?
+  normalizedMonth    String?
+  code               String?
+  name               String
+  unit               String?
+  qty                Float                @default(0)
+  price              Float                @default(0)
+  amount             Float                @default(0)
+  remark             String?
+  status             String               @default("pending")
+  reviewClass        String               @default("pending_review")
+  riskLevel          String               @default("low")
+  riskReasonsJson    String               @default("[]")
+  conflictState      String               @default("none")
+  deletedAt          DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  observations       ProductObservation[]
 
   @@index([batchId, status])
   @@index([documentId])
@@ -162,13 +164,13 @@ model Product {
   code        String?
   name        String
   unit        String?
-  aliasesJson String           @default("[]")
-  status      String           @default("active")
+  aliasesJson String            @default("[]")
+  status      String            @default("active")
   remark      String?
   firstSeenAt DateTime?
   lastSeenAt  DateTime?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
   conflicts   ProductConflict[]
 
   @@index([code])
@@ -176,17 +178,17 @@ model Product {
 }
 
 model ProductConflict {
-  id              String    @id @default(cuid())
-  productId       String?
-  product         Product?  @relation(fields: [productId], references: [id])
-  type            String
-  severity        String
-  reason          String
-  sourceRowIdsJson String   @default("[]")
-  status          String    @default("open")
-  resolutionNote  String?
-  createdAt       DateTime  @default(now())
-  resolvedAt      DateTime?
+  id               String    @id @default(cuid())
+  productId        String?
+  product          Product?  @relation(fields: [productId], references: [id])
+  type             String
+  severity         String
+  reason           String
+  sourceRowIdsJson String    @default("[]")
+  status           String    @default("open")
+  resolutionNote   String?
+  createdAt        DateTime  @default(now())
+  resolvedAt       DateTime?
 
   @@index([status, severity])
   @@index([type])
@@ -224,6 +226,8 @@ model AiProviderConfig {
   priority        Int      @default(100)
   temperature     Float?
   maxOutputTokens Int      @default(2000)
+  systemPrompt    String?
+  userPrompt      String?
   metadataJson    String   @default("{}")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

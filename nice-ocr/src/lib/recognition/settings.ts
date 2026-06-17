@@ -6,6 +6,13 @@ export const supportedProviderProtocols = ["openai_responses", "anthropic_messag
 
 export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
 
+/** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
+export const defaultRecognitionPrompts = {
+  systemPrompt:
+    "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。",
+  userPrompt: "请抽取这张单据图片中的日期和所有表格明细行。",
+} as const;
+
 export interface RecognitionDefaults {
   strategy: "fast" | "balanced" | "consensus" | "manual";
   approvalMode: ApprovalMode;
@@ -13,6 +20,12 @@ export interface RecognitionDefaults {
   queueConcurrency: number;
   maxAttempts: number;
   backoffSeconds: number;
+  /** 双模型交叉验证：pass1 主模型 / pass2 副模型（providerKey，空则按优先级回退）。 */
+  primaryProviderKey: string | null;
+  secondaryProviderKey: string | null;
+  /** 全局默认识别提示词。 */
+  systemPrompt: string;
+  userPrompt: string;
 }
 
 export interface SafeAiProviderConfig {
@@ -26,6 +39,8 @@ export interface SafeAiProviderConfig {
   priority: number;
   temperature: number | null;
   maxOutputTokens: number;
+  systemPrompt: string | null;
+  userPrompt: string | null;
   metadataJson: string;
   hasApiKey: boolean;
   createdAt: string;
@@ -44,6 +59,8 @@ export interface AiProviderConfigInput {
   priority?: number;
   temperature?: number | null;
   maxOutputTokens?: number;
+  systemPrompt?: string | null;
+  userPrompt?: string | null;
   metadataJson?: string;
 }
 
@@ -59,6 +76,10 @@ export const recognitionDefaults: RecognitionDefaults = {
   queueConcurrency: 3,
   maxAttempts: 3,
   backoffSeconds: 30,
+  primaryProviderKey: null,
+  secondaryProviderKey: null,
+  systemPrompt: defaultRecognitionPrompts.systemPrompt,
+  userPrompt: defaultRecognitionPrompts.userPrompt,
 };
 
 const recognitionDefaultsKey = "recognition.defaults";
@@ -105,6 +126,8 @@ export async function upsertAiProviderConfig(input: AiProviderConfigInput) {
     priority: normalized.priority,
     temperature: normalized.temperature,
     maxOutputTokens: normalized.maxOutputTokens,
+    systemPrompt: normalized.systemPrompt,
+    userPrompt: normalized.userPrompt,
     metadataJson: normalized.metadataJson,
     ...(apiKey !== undefined ? { apiKey } : {}),
   };
@@ -144,6 +167,45 @@ export async function getActiveAiProviderConfig() {
   return provider;
 }
 
+export interface RecognitionProviderPair {
+  primary: AiProviderConfig;
+  /** 副模型；未配置或与主相同时退化为 primary（即单模型双跑）。 */
+  secondary: AiProviderConfig;
+  defaults: RecognitionDefaults;
+}
+
+/**
+ * 解析一个批次实际使用的主/副识别 provider（双模型交叉验证）。
+ * 优先级：批次显式指定 > 设置页全局默认 > 按优先级回退到已启用 provider。
+ * 副模型缺省时自动选一个与主模型不同的已启用 provider；没有别的可用则退化为主模型双跑。
+ */
+export async function resolveRecognitionProviders(
+  batch: { primaryProviderKey?: string | null; secondaryProviderKey?: string | null } = {},
+): Promise<RecognitionProviderPair> {
+  const defaults = parseRecognitionDefaults(
+    (await prisma.appSetting.findUnique({ where: { key: recognitionDefaultsKey } }))?.valueJson,
+  );
+  const enabled = await prisma.aiProviderConfig.findMany({
+    where: { enabled: true, AND: [{ apiKey: { not: null } }, { apiKey: { not: "" } }] },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+  });
+  if (enabled.length === 0) {
+    throw new Error("No enabled AI provider with an API key is configured in the database settings");
+  }
+
+  const byKey = new Map(enabled.map((provider) => [provider.providerKey, provider]));
+  const pick = (key?: string | null) => (key ? byKey.get(key) ?? null : null);
+
+  const primary = pick(batch.primaryProviderKey) ?? pick(defaults.primaryProviderKey) ?? enabled[0];
+  const secondary =
+    pick(batch.secondaryProviderKey) ??
+    pick(defaults.secondaryProviderKey) ??
+    enabled.find((provider) => provider.id !== primary.id) ??
+    primary;
+
+  return { primary, secondary, defaults };
+}
+
 export function toSafeProviderConfig(provider: AiProviderConfig): SafeAiProviderConfig {
   return {
     id: provider.id,
@@ -156,6 +218,8 @@ export function toSafeProviderConfig(provider: AiProviderConfig): SafeAiProvider
     priority: provider.priority,
     temperature: provider.temperature,
     maxOutputTokens: provider.maxOutputTokens,
+    systemPrompt: provider.systemPrompt,
+    userPrompt: provider.userPrompt,
     metadataJson: provider.metadataJson,
     hasApiKey: Boolean(provider.apiKey?.trim()),
     createdAt: provider.createdAt.toISOString(),
@@ -178,8 +242,17 @@ function normalizeProviderInput(input: AiProviderConfigInput) {
     priority: clampInt(input.priority, 1, 999, 100),
     temperature: input.temperature == null ? null : Number(input.temperature),
     maxOutputTokens: clampInt(input.maxOutputTokens, 256, 16000, 2000),
+    systemPrompt: normalizePromptString(input.systemPrompt),
+    userPrompt: normalizePromptString(input.userPrompt),
     metadataJson: normalizeJsonObjectString(input.metadataJson),
   };
+}
+
+/** 提示词覆盖：空字符串视为“未覆盖”→ null（识别时回退全局默认）。 */
+function normalizePromptString(value: unknown): string | null {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized ? normalized : null;
 }
 
 function parseRecognitionDefaults(raw?: string | null): RecognitionDefaults {
@@ -202,6 +275,10 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     queueConcurrency: clampInt(input.queueConcurrency, 1, 12, recognitionDefaults.queueConcurrency),
     maxAttempts: clampInt(input.maxAttempts, 1, 10, recognitionDefaults.maxAttempts),
     backoffSeconds: clampInt(input.backoffSeconds, 1, 3600, recognitionDefaults.backoffSeconds),
+    primaryProviderKey: normalizePromptString(input.primaryProviderKey),
+    secondaryProviderKey: normalizePromptString(input.secondaryProviderKey),
+    systemPrompt: normalizeOptionalString(input.systemPrompt) ?? recognitionDefaults.systemPrompt,
+    userPrompt: normalizeOptionalString(input.userPrompt) ?? recognitionDefaults.userPrompt,
   };
 }
 

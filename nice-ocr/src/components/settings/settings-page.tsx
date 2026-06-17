@@ -21,6 +21,10 @@ interface SettingsPayload {
     queueConcurrency: number;
     maxAttempts: number;
     backoffSeconds: number;
+    primaryProviderKey: string | null;
+    secondaryProviderKey: string | null;
+    systemPrompt: string;
+    userPrompt: string;
   };
   providers: ProviderForm[];
 }
@@ -36,6 +40,8 @@ interface ProviderForm {
   priority: number;
   temperature: number | null;
   maxOutputTokens: number;
+  systemPrompt: string | null;
+  userPrompt: string | null;
   metadataJson: string;
   hasApiKey?: boolean;
   apiKey?: string;
@@ -56,6 +62,8 @@ const defaultProvider: ProviderForm = {
   priority: 100,
   temperature: null,
   maxOutputTokens: 2000,
+  systemPrompt: null,
+  userPrompt: null,
   metadataJson: "{}",
 };
 
@@ -150,6 +158,27 @@ export function SettingsPage() {
               <NumberField label="最大重试" value={draft.defaults.maxAttempts} onChange={(value) => updateDefaults("maxAttempts", value)} />
               <NumberField label="退避秒数" value={draft.defaults.backoffSeconds} onChange={(value) => updateDefaults("backoffSeconds", value)} />
             </div>
+
+            <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3">
+              <div className="text-sm font-medium">双模型交叉验证（新建批次继承）</div>
+              <p className="text-xs text-muted-foreground">
+                两次识别分别用主、副模型，两次一致才允许 AI 自动通过。副模型留空则自动选另一个启用的 provider，无其他可用时退化为主模型双跑。
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ProviderSelect
+                  label="主模型（pass1）"
+                  value={draft.defaults.primaryProviderKey}
+                  providers={draft.providers}
+                  onChange={(value) => updateDefaults("primaryProviderKey", value)}
+                />
+                <ProviderSelect
+                  label="副模型（pass2）"
+                  value={draft.defaults.secondaryProviderKey}
+                  providers={draft.providers}
+                  onChange={(value) => updateDefaults("secondaryProviderKey", value)}
+                />
+              </div>
+            </div>
           </div>
         </Panel>
 
@@ -204,6 +233,21 @@ export function SettingsPage() {
                   <NumberField label="最大输出 Tokens" value={provider.maxOutputTokens} onChange={(value) => updateProvider(index, { maxOutputTokens: value })} />
                 </div>
 
+                <div className="mt-3 space-y-3">
+                  <TextAreaField
+                    label="系统提示词覆盖"
+                    value={provider.systemPrompt ?? ""}
+                    placeholder="留空则使用全局默认系统提示词"
+                    onChange={(value) => updateProvider(index, { systemPrompt: value })}
+                  />
+                  <TextAreaField
+                    label="用户提示词覆盖"
+                    value={provider.userPrompt ?? ""}
+                    placeholder="留空则使用全局默认用户提示词"
+                    onChange={(value) => updateProvider(index, { userPrompt: value })}
+                  />
+                </div>
+
                 <div className="mt-3 flex items-center gap-2">
                   <Button size="sm" variant="secondary" onClick={() => testProvider(provider)}>
                     <TestTube2 size={15} />测试连接
@@ -217,6 +261,27 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel>
+        <PanelHeader><PanelTitle>全局识别提示词</PanelTitle></PanelHeader>
+        <div className="space-y-4 p-4">
+          <p className="text-xs text-muted-foreground">
+            作为所有识别的默认提示词；某个 provider 在上方填写覆盖后，该 provider 改用自己的提示词。
+          </p>
+          <TextAreaField
+            label="系统提示词（System）"
+            value={draft.defaults.systemPrompt}
+            placeholder="描述识别任务、输出约束等"
+            onChange={(value) => updateDefaults("systemPrompt", value)}
+          />
+          <TextAreaField
+            label="用户提示词（User）"
+            value={draft.defaults.userPrompt}
+            placeholder="对单张图片的具体指令"
+            onChange={(value) => updateDefaults("userPrompt", value)}
+          />
+        </div>
+      </Panel>
     </div>
   );
 
@@ -275,6 +340,61 @@ function TextField({
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
       />
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-muted-foreground">{label}</span>
+      <textarea
+        className="min-h-20 w-full rounded-md border border-border bg-background px-3 py-2 text-sm leading-relaxed"
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function ProviderSelect({
+  label,
+  value,
+  providers,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  providers: ProviderForm[];
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-muted-foreground">{label}</span>
+      <select
+        className="h-9 w-full rounded-md border border-border bg-surface px-3"
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value || null)}
+      >
+        <option value="">自动（按优先级）</option>
+        {providers.map((provider) => (
+          <option key={provider.id ?? provider.providerKey} value={provider.providerKey}>
+            {(provider.displayName || provider.providerKey)} · {provider.model}
+            {provider.enabled ? "" : "（未启用）"}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
