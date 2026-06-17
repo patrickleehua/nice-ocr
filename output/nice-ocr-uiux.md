@@ -622,3 +622,15 @@ User feedback after live use. These supersede earlier wording where they conflic
 ### 13.6 Import encoding
 
 - v5 JSON import must be encoding-robust: strip a UTF-8 BOM, decode UTF-8 strictly, and fall back to GB18030 for legacy Chinese files so 中文 never renders as mojibake. Uploaded image file names must also display their original Chinese characters intact.
+
+## 14. Audit module — second-pass review of confirmed data (2026-06-17)
+
+Background and design: `output/nice-ocr-audit-module-research.md`. Targets the precision blind spot: rows auto-approved by the machine (`reviewClass = ai_auto`) that no human ever sees.
+
+- **Trigger**: manual "运行审核" button (batch / review workbench). Enqueues an `audit` job per document that has `ai_auto` confirmed rows. No auto/scheduled run in v1 (cost stays transparent).
+- **Pipeline (Option C, hybrid)**: Stage 1 rule/statistical pre-filter (re-validate; price outlier vs product-library history; unit mismatch; duplicate row) over all `ai_auto` rows, zero API cost. Stage 2 a third independent AI read of the image cross-checked against the confirmed rows (reused consensus comparison); runs on suspicious documents always, on clean documents at `auditSampleRate`.
+- **Row audit state** (`auditState`, badge): `none` 未审核 / `passed` 审核通过(success) / `flagged` 待复审(danger) / `reviewed` 已复审(info). Flagged rows carry `auditNote` (human-readable reasons) and optional `auditSuggestionJson` (AI suggested values).
+- **Disposition**: AI never rewrites confirmed data — it only flags + suggests. Flagged rows form a **复审队列** surfaced via the 全部结果 `审核=待复审` filter and the review workbench (audit badge + "采纳" to apply the AI suggestion). Any human confirm/edit on a flagged row transitions it to `reviewed` (leaves the queue).
+- **Dashboard**: a "待复审" tile (flaggedRows) + "前往复审" link to `/results?audit=flagged`.
+- **Settings**: 审核模型 (audit provider, prefer one different from the primary for an independent lens) + 干净行抽样率 (auditSampleRate 0~1).
+- Non-goals: no full-AI re-audit, no auto-rewrite, no scheduled run, no cascade relations.

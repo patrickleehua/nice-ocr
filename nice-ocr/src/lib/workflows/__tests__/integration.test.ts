@@ -12,6 +12,7 @@ import { resolveProductConflict } from "../conflicts";
 import { buildConsensusFlags, decideRowReview } from "../../recognition/review";
 import { resolveProviderPrompts } from "../../recognition/provider";
 import { defaultRecognitionPrompts } from "../../recognition/settings";
+import { auditRowByRules, buildAuditStats, findDuplicateRowIds } from "../../recognition/audit";
 
 const rollback = Symbol("rollback");
 
@@ -350,5 +351,44 @@ describe("provider prompts", () => {
       systemPrompt: defaultRecognitionPrompts.systemPrompt,
       userPrompt: defaultRecognitionPrompts.userPrompt,
     });
+  });
+});
+
+describe("audit rules", () => {
+  const history = [
+    { name: "苹果", code: "", unit: "斤", qty: 1, price: 5, amount: 5 },
+    { name: "苹果", code: "", unit: "斤", qty: 1, price: 5.2, amount: 5.2 },
+    { name: "苹果", code: "", unit: "斤", qty: 1, price: 4.8, amount: 4.8 },
+  ];
+
+  it("flags price outliers and unit mismatches vs history; clean rows pass", () => {
+    const stats = buildAuditStats(history);
+    // 正常价/单位 → 不可疑。
+    assert.equal(
+      auditRowByRules({ name: "苹果", code: "", unit: "斤", qty: 1, price: 5, amount: 5 }, stats).suspicious,
+      false,
+    );
+    // 单价远离历史中位数 → PRICE_OUTLIER。
+    const outlier = auditRowByRules({ name: "苹果", code: "", unit: "斤", qty: 1, price: 50, amount: 50 }, stats);
+    assert.equal(outlier.suspicious, true);
+    assert.ok(outlier.reasons.includes("PRICE_OUTLIER"));
+    // 单位与历史主导不一致 → UNIT_MISMATCH。
+    const unit = auditRowByRules({ name: "苹果", code: "", unit: "箱", qty: 1, price: 5, amount: 5 }, stats);
+    assert.ok(unit.reasons.includes("UNIT_MISMATCH"));
+  });
+
+  it("flags rule violations (invalid name / amount mismatch)", () => {
+    const bad = auditRowByRules({ name: "合计", code: "", unit: "", qty: 1, price: 2, amount: 99 }, buildAuditStats([]));
+    assert.equal(bad.suspicious, true);
+    assert.ok(bad.reasons.includes("RULE_VIOLATION"));
+  });
+
+  it("detects duplicate rows within a document", () => {
+    const dups = findDuplicateRowIds([
+      { id: "a", name: "苹果", code: "", unit: "斤", qty: 1, price: 5, amount: 5 },
+      { id: "b", name: "苹果", code: "", unit: "斤", qty: 1, price: 5, amount: 5 },
+      { id: "c", name: "香蕉", code: "", unit: "斤", qty: 2, price: 3, amount: 6 },
+    ]);
+    assert.deepEqual([dups.has("a"), dups.has("b"), dups.has("c")], [true, true, false]);
   });
 });
