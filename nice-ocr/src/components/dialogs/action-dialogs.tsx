@@ -36,10 +36,12 @@ export function CreateBatchDrawer({
   open,
   onClose,
   onSubmit,
+  defaultApprovalMode = "hybrid",
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: { name: string; strategy: string; notes: string }) => void;
+  onSubmit: (payload: { name: string; strategy: string; notes: string; approvalMode: string }) => void;
+  defaultApprovalMode?: string;
 }) {
   return (
     <DrawerShell title="创建批次" open={open} onClose={onClose}>
@@ -52,12 +54,21 @@ export function CreateBatchDrawer({
             name: String(form.get("name") ?? ""),
             strategy: String(form.get("strategy") ?? "balanced"),
             notes: String(form.get("notes") ?? ""),
+            approvalMode: String(form.get("approvalMode") ?? "hybrid"),
           });
         }}
       >
         <label className="block text-sm">
           <span className="mb-1 block text-muted-foreground">批次名称</span>
           <input name="name" required className="h-9 w-full rounded-md border border-border px-3" placeholder="2024-06 销售单据批次" />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted-foreground">审批模式</span>
+          <select name="approvalMode" defaultValue={defaultApprovalMode} className="h-9 w-full rounded-md border border-border bg-surface px-3">
+            <option value="manual">全人工：所有行人工确认</option>
+            <option value="hybrid">混合：双次一致+低风险自动通过，其余转人工</option>
+            <option value="auto">AI自动：双次一致即自动通过，高风险转人工</option>
+          </select>
         </label>
         <label className="block text-sm">
           <span className="mb-1 block text-muted-foreground">识别策略</span>

@@ -35,7 +35,10 @@ export async function confirmRecognitionRows(selector: ConfirmSelector, db: DbCl
     return null;
   }
 
-  const result = await db.recognitionRow.updateMany({ where, data: { status: "confirmed" } });
+  const result = await db.recognitionRow.updateMany({
+    where,
+    data: { status: "confirmed", reviewClass: "human" },
+  });
   return result.count;
 }
 

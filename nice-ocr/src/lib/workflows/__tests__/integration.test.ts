@@ -9,6 +9,7 @@ import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
 import { confirmRecognitionRows, excludeRecognitionRow, updateRecognitionRow } from "../rows";
 import { resolveProductConflict } from "../conflicts";
+import { buildConsensusFlags, decideRowReview } from "../../recognition/review";
 
 const rollback = Symbol("rollback");
 
@@ -290,5 +291,39 @@ describe("workflow integration", () => {
 
       assert.equal(await resolveProductConflict("does-not-exist", {}, tx), null);
     });
+  });
+});
+
+describe("review decisions", () => {
+  it("never auto-approves high risk; mode gates the rest", () => {
+    // 高风险任何模式都转冲突。
+    assert.deepEqual(decideRowReview("auto", "high", true), { status: "conflict", reviewClass: "conflict" });
+    assert.deepEqual(decideRowReview("hybrid", "high", true), { status: "conflict", reviewClass: "conflict" });
+
+    // manual：不自动通过。
+    assert.equal(decideRowReview("manual", "low", true).reviewClass, "pending_review");
+
+    // hybrid：低风险 + 双次一致 → 自动通过；缺一不可。
+    assert.equal(decideRowReview("hybrid", "low", true).reviewClass, "ai_auto");
+    assert.equal(decideRowReview("hybrid", "low", false).reviewClass, "pending_review");
+    assert.equal(decideRowReview("hybrid", "medium", true).reviewClass, "pending_review");
+
+    // auto：双次一致即自动通过（含中风险）；不一致转人工。
+    assert.equal(decideRowReview("auto", "medium", true).reviewClass, "ai_auto");
+    assert.equal(decideRowReview("auto", "low", false).reviewClass, "pending_review");
+  });
+
+  it("consensus flags match rows by code/name within tolerance", () => {
+    const a = [
+      { code: "A1", name: "苹果", qty: 2, price: 3, amount: 6 },
+      { code: "", name: "香蕉", qty: 5, price: 6, amount: 30 },
+      { code: "", name: "牛奶", qty: 1, price: 9, amount: 9 },
+    ];
+    const b = [
+      { code: "A1", name: "苹果", qty: 2, price: 3, amount: 6 }, // 按编码匹配
+      { code: "", name: "香 蕉", qty: 5, price: 6, amount: 30 }, // 按去空白名称匹配
+      { code: "", name: "牛奶", qty: 1, price: 8, amount: 8 }, // 单价/金额不一致 → 不匹配
+    ];
+    assert.deepEqual(buildConsensusFlags(a, b), [true, true, false]);
   });
 });

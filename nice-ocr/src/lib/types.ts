@@ -63,6 +63,7 @@ export interface RecognitionRow {
   amount: number;
   risk: RiskLevel;
   status: RowStatus;
+  reviewClass: string;
   conflictReason?: string;
   remark?: string;
   updatedAt: string;

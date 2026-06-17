@@ -12,6 +12,7 @@ model Batch {
   notes            String?
   status           String           @default("draft")
   strategy         String           @default("balanced")
+  approvalMode     String           @default("hybrid")
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   documents        Document[]
@@ -120,6 +121,7 @@ model RecognitionRow {
   amount            Float              @default(0)
   remark            String?
   status            String             @default("pending")
+  reviewClass       String             @default("pending_review")
   riskLevel         String             @default("low")
   riskReasonsJson   String             @default("[]")
   conflictState     String             @default("none")

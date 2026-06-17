@@ -20,6 +20,9 @@ interface DashboardSummary {
     pendingRows: number;
     confirmedRows: number;
     conflicts: number;
+    autoApprovedRows: number;
+    humanConfirmedRows: number;
+    autoApprovalRate: number;
   };
   activeBatch: { id: string; name: string; status: string; documents: number; rows: number } | null;
   recentFailures: Array<{ id: string; fileName: string; risk: RiskLevel; reason: string; updatedAt: string }>;
@@ -94,7 +97,7 @@ export function DashboardPage() {
         <Panel>
           <PanelHeader>
             <PanelTitle>审核进度</PanelTitle>
-            <span className="text-xs text-muted-foreground">已确认 / 待审核</span>
+            <span className="text-xs text-muted-foreground">自动通过率 {metrics?.autoApprovalRate ?? 0}%</span>
           </PanelHeader>
           <div className="px-4 py-4">
             <div className="mb-4 flex items-center justify-between text-xs text-muted-foreground">
@@ -107,9 +110,9 @@ export function DashboardPage() {
               <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
             </div>
             <div className="mt-6 grid grid-cols-3 gap-3">
-              <StatTile label="排队任务" value={metrics?.queued ?? 0} tone="text-warning-strong" />
-              <StatTile label="失败文档" value={metrics?.failed ?? 0} tone="text-danger-strong" />
-              <StatTile label="未解决冲突" value={metrics?.conflicts ?? 0} tone="text-danger-strong" />
+              <StatTile label="AI自动通过" value={metrics?.autoApprovedRows ?? 0} tone="text-success-strong" />
+              <StatTile label="人工确认" value={metrics?.humanConfirmedRows ?? 0} tone="text-info-strong" />
+              <StatTile label="待人工复核" value={metrics?.pendingRows ?? 0} tone="text-warning-strong" />
             </div>
           </div>
         </Panel>

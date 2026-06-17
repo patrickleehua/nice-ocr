@@ -4,63 +4,102 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db/client";
 import { env } from "@/lib/env";
-import { createConfiguredRecognitionProvider } from "@/lib/recognition/provider";
-import { claimNextJob, enqueueSecondPassIfNeeded } from "@/lib/queue/jobs";
+import {
+  createConfiguredRecognitionProvider,
+  type RecognitionProvider,
+  type RecognitionProviderResult,
+} from "@/lib/recognition/provider";
+import { claimNextJob } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
+import {
+  buildConsensusFlags,
+  decideRowReview,
+  normalizeApprovalMode,
+  requiresConsensus,
+} from "@/lib/recognition/review";
 
 const workerId = `worker-${process.pid}`;
+
+type ClaimedJob = NonNullable<Awaited<ReturnType<typeof claimNextJob>>>;
+
+async function recordAttempt(
+  job: ClaimedJob,
+  result: RecognitionProviderResult,
+  pass: number,
+  startedAt: number,
+) {
+  const attemptDir = path.join(env.storageDir, "attempts", job.documentId);
+  await mkdir(attemptDir, { recursive: true });
+  const rawOutputPath = path.join(attemptDir, `${job.id}-pass${pass}.json`);
+  await writeFile(rawOutputPath, JSON.stringify(result.rawResponse, null, 2), "utf8");
+
+  return prisma.extractionAttempt.create({
+    data: {
+      documentId: job.documentId,
+      jobId: job.id,
+      providerKey: result.providerKey,
+      model: result.model,
+      promptVersion: "v1",
+      schemaVersion: "v1",
+      strategy: job.batch.strategy,
+      status: "completed",
+      rawOutputPath,
+      parsedJson: JSON.stringify(result.extraction),
+      validationJson: JSON.stringify({ normalizedMonth: result.extraction.normalizedMonth, pass }),
+      tokenUsageJson: result.tokenUsage ? JSON.stringify(result.tokenUsage) : undefined,
+      latencyMs: Date.now() - startedAt,
+      completedAt: new Date(),
+    },
+  });
+}
+
+async function recognizePass(provider: RecognitionProvider, job: ClaimedJob, imageBase64: string, pass: number) {
+  const startedAt = Date.now();
+  const result = await provider.recognize({ imageBase64, mimeType: job.document.mimeType });
+  const attempt = await recordAttempt(job, result, pass, startedAt);
+  return { result, attempt };
+}
 
 async function processOne() {
   const job = await claimNextJob(workerId);
   if (!job) return false;
 
-  const startedAt = new Date();
   try {
     const provider = await createConfiguredRecognitionProvider();
-    const imageBuffer = await readFile(job.document.storedPath);
-    const result = await provider.recognize({
-      imageBase64: imageBuffer.toString("base64"),
-      mimeType: job.document.mimeType,
-    });
+    const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
+    const mode = normalizeApprovalMode(job.batch.approvalMode);
 
-    const attemptDir = path.join(env.storageDir, "attempts", job.documentId);
-    await mkdir(attemptDir, { recursive: true });
-    const rawOutputPath = path.join(attemptDir, `${job.id}.json`);
-    await writeFile(rawOutputPath, JSON.stringify(result.rawResponse, null, 2), "utf8");
+    // 第一次识别（canonical 结果）。
+    const first = await recognizePass(provider, job, imageBase64, 1);
+    const canonicalRows = first.result.extraction.rows;
 
-    const attempt = await prisma.extractionAttempt.create({
-      data: {
-        documentId: job.documentId,
-        jobId: job.id,
-        providerKey: result.providerKey,
-        model: result.model,
-        promptVersion: "v1",
-        schemaVersion: "v1",
-        strategy: job.batch.strategy,
-        status: "completed",
-        rawOutputPath,
-        parsedJson: JSON.stringify(result.extraction),
-        validationJson: JSON.stringify({ normalizedMonth: result.extraction.normalizedMonth }),
-        tokenUsageJson: result.tokenUsage ? JSON.stringify(result.tokenUsage) : undefined,
-        latencyMs: Date.now() - startedAt.getTime(),
-        completedAt: new Date(),
-      },
-    });
+    // hybrid / auto 需要第二次识别做一致性比对。
+    let consensusFlags = canonicalRows.map(() => false);
+    if (requiresConsensus(mode)) {
+      const second = await recognizePass(provider, job, imageBase64, 2);
+      consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows);
+    }
 
     await prisma.recognitionRow.deleteMany({
       where: { documentId: job.documentId, status: { not: "confirmed" } },
     });
 
-    for (const [index, row] of result.extraction.rows.entries()) {
+    let hasHighRisk = false;
+    let autoApproved = 0;
+    for (const [index, row] of canonicalRows.entries()) {
       const validation = validateRow(row);
+      const decision = decideRowReview(mode, validation.riskLevel, consensusFlags[index] ?? false);
+      if (validation.riskLevel === "high") hasHighRisk = true;
+      if (decision.reviewClass === "ai_auto") autoApproved += 1;
+
       await prisma.recognitionRow.create({
         data: {
           batchId: job.batchId,
           documentId: job.documentId,
-          canonicalAttemptId: attempt.id,
+          canonicalAttemptId: first.attempt.id,
           rowIndex: index + 1,
-          rawDate: result.extraction.rawDate,
-          normalizedMonth: result.extraction.normalizedMonth,
+          rawDate: first.result.extraction.rawDate,
+          normalizedMonth: first.result.extraction.normalizedMonth,
           code: validation.cleanCode,
           name: row.name,
           unit: row.unit,
@@ -68,7 +107,8 @@ async function processOne() {
           price: row.price,
           amount: row.amount,
           remark: row.remark,
-          status: validation.riskLevel === "low" ? "pending" : "needs_review",
+          status: decision.status,
+          reviewClass: decision.reviewClass,
           riskLevel: validation.riskLevel,
           riskReasonsJson: JSON.stringify(validation.reasons),
           conflictState: validation.reasons.length ? "open" : "none",
@@ -76,24 +116,23 @@ async function processOne() {
       });
     }
 
-    const hasHighRisk = result.extraction.rows.some((row) => validateRow(row).riskLevel === "high");
     await prisma.document.update({
       where: { id: job.documentId },
       data: {
         status: "extracted",
+        reviewStatus: autoApproved === canonicalRows.length && canonicalRows.length > 0 ? "auto_approved" : "pending",
         riskLevel: hasHighRisk ? "high" : "low",
       },
     });
-
-    if (job.batch.strategy === "balanced" && job.type === "extract" && hasHighRisk) {
-      await enqueueSecondPassIfNeeded(job.documentId, job.batchId);
-    }
 
     await prisma.recognitionJob.update({
       where: { id: job.id },
       data: { status: "completed", lockedAt: null, lockedBy: null },
     });
 
+    console.log(
+      `${workerId} done doc=${job.documentId} mode=${mode} rows=${canonicalRows.length} auto=${autoApproved}`,
+    );
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -112,6 +151,7 @@ async function processOne() {
       where: { id: job.documentId },
       data: { status: shouldRetry ? "queued" : "failed" },
     });
+    console.error(`${workerId} failed job=${job.id}: ${message}`);
     return true;
   }
 }

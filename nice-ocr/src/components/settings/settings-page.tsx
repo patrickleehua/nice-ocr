@@ -11,9 +11,12 @@ import { Badge } from "@/components/ui/badge";
 type Protocol = "openai_responses" | "anthropic_messages";
 type Strategy = "fast" | "balanced" | "consensus" | "manual";
 
+type ApprovalMode = "manual" | "hybrid" | "auto";
+
 interface SettingsPayload {
   defaults: {
     strategy: Strategy;
+    approvalMode: ApprovalMode;
     amountTolerance: number;
     queueConcurrency: number;
     maxAttempts: number;
@@ -127,6 +130,18 @@ export function SettingsPage() {
                 <option value="fast">fast：单次识别</option>
                 <option value="consensus">consensus：全量多次识别</option>
                 <option value="manual">manual：人工导入/录入</option>
+              </select>
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-muted-foreground">默认审批模式（新建批次继承）</span>
+              <select
+                className="h-9 w-full rounded-md border border-border bg-surface px-3"
+                value={draft.defaults.approvalMode}
+                onChange={(event) => updateDefaults("approvalMode", event.target.value as ApprovalMode)}
+              >
+                <option value="manual">全人工：所有行人工确认</option>
+                <option value="hybrid">混合：双次一致+低风险自动通过，其余转人工</option>
+                <option value="auto">AI自动：双次一致即自动通过，高风险转人工</option>
               </select>
             </label>
             <div className="grid gap-4 md:grid-cols-2">

@@ -33,6 +33,27 @@ export function RowStatusBadge({ status }: { status: RowStatus }) {
   return <Badge tone={map[status].tone}>{map[status].label}</Badge>;
 }
 
+export function ReviewClassBadge({ value }: { value: string }) {
+  const map: Record<string, { label: string; tone: "success" | "info" | "warning" | "danger" | "neutral" }> = {
+    ai_auto: { label: "AI自动通过", tone: "success" },
+    human: { label: "人工确认", tone: "info" },
+    pending_review: { label: "待人工复核", tone: "warning" },
+    conflict: { label: "冲突", tone: "danger" },
+  };
+  const item = map[value] ?? map.pending_review;
+  return <Badge tone={item.tone}>{item.label}</Badge>;
+}
+
+const approvalModeLabels: Record<string, string> = {
+  manual: "全人工",
+  hybrid: "混合(AI+人工)",
+  auto: "AI自动",
+};
+
+export function ApprovalModeBadge({ mode }: { mode: string }) {
+  return <Badge tone="neutral">{approvalModeLabels[mode] ?? approvalModeLabels.hybrid}</Badge>;
+}
+
 export function JobStatusBadge({ status }: { status: JobStatus }) {
   const map = {
     queued: { label: "排队", tone: "neutral" as const },

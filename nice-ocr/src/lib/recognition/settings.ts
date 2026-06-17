@@ -1,5 +1,6 @@
 import type { AiProviderConfig } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import { normalizeApprovalMode, type ApprovalMode } from "@/lib/recognition/review";
 
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
 
@@ -7,6 +8,7 @@ export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
 
 export interface RecognitionDefaults {
   strategy: "fast" | "balanced" | "consensus" | "manual";
+  approvalMode: ApprovalMode;
   amountTolerance: number;
   queueConcurrency: number;
   maxAttempts: number;
@@ -52,6 +54,7 @@ export interface RecognitionSettingsPayload {
 
 export const recognitionDefaults: RecognitionDefaults = {
   strategy: "balanced",
+  approvalMode: "hybrid",
   amountTolerance: 0.01,
   queueConcurrency: 3,
   maxAttempts: 3,
@@ -194,6 +197,7 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     : recognitionDefaults.strategy;
   return {
     strategy,
+    approvalMode: normalizeApprovalMode(input.approvalMode),
     amountTolerance: clampNumber(input.amountTolerance, 0, 100, recognitionDefaults.amountTolerance),
     queueConcurrency: clampInt(input.queueConcurrency, 1, 12, recognitionDefaults.queueConcurrency),
     maxAttempts: clampInt(input.maxAttempts, 1, 10, recognitionDefaults.maxAttempts),

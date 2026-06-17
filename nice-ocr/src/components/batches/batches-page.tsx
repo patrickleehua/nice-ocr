@@ -5,7 +5,7 @@ import { Plus, UploadCloud } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { BatchStatusBadge } from "@/components/ui/status";
+import { ApprovalModeBadge, BatchStatusBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 import { CreateBatchDrawer } from "@/components/dialogs/action-dialogs";
@@ -18,6 +18,7 @@ interface ApiBatch {
   name: string;
   status: string;
   strategy: string;
+  approvalMode: string;
   createdAt: string;
   _count?: { documents: number; rows: number };
 }
@@ -34,9 +35,13 @@ export function BatchesPage() {
     queryKey: ["batches"],
     queryFn: () => apiGet(apiPaths.batches),
   });
+  const { data: settings } = useQuery<{ defaults: { approvalMode: string } }>({
+    queryKey: ["settings"],
+    queryFn: () => apiGet(apiPaths.settings),
+  });
 
   const createBatch = useMutation({
-    mutationFn: (payload: { name: string; strategy: string; notes: string }) =>
+    mutationFn: (payload: { name: string; strategy: string; notes: string; approvalMode: string }) =>
       apiJson(apiPaths.batches, { method: "POST", body: JSON.stringify(payload) }),
     onSuccess: () => {
       setCreateOpen(false);
@@ -126,6 +131,7 @@ export function BatchesPage() {
               <th className={tableCellClass}>状态</th>
               <th className={tableCellClass}>文档数</th>
               <th className={tableCellClass}>行数</th>
+              <th className={tableCellClass}>审批模式</th>
               <th className={tableCellClass}>策略</th>
               <th className={tableCellClass}>创建时间</th>
               <th className={tableCellClass}>操作</th>
@@ -143,6 +149,7 @@ export function BatchesPage() {
                   <td className={tableCellClass}><BatchStatusBadge status={batch.status as BatchStatus} /></td>
                   <td className={tableCellClass}>{formatNumber(batch._count?.documents ?? 0)}</td>
                   <td className={tableCellClass}>{formatNumber(batch._count?.rows ?? 0)}</td>
+                  <td className={tableCellClass}><ApprovalModeBadge mode={batch.approvalMode} /></td>
                   <td className={tableCellClass}>{batch.strategy}</td>
                   <td className={tableCellClass}>{formatDateTime(batch.createdAt)}</td>
                   <td className={tableCellClass}>
@@ -159,7 +166,7 @@ export function BatchesPage() {
               ))
             ) : (
               <tr>
-                <td className={tableCellClass} colSpan={7}>
+                <td className={tableCellClass} colSpan={8}>
                   <span className="text-muted-foreground">{isLoading ? "加载中..." : "暂无批次，点击右上角新建批次"}</span>
                 </td>
               </tr>
@@ -170,6 +177,7 @@ export function BatchesPage() {
       <CreateBatchDrawer
         open={createOpen}
         onClose={() => setCreateOpen(false)}
+        defaultApprovalMode={settings?.defaults.approvalMode ?? "hybrid"}
         onSubmit={(payload) => createBatch.mutate(payload)}
       />
     </div>

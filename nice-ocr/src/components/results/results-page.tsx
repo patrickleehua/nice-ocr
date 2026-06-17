@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { RowStatusBadge, RiskBadge } from "@/components/ui/status";
+import { ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils";
 import { EditRowDrawer } from "@/components/dialogs/action-dialogs";
@@ -27,6 +27,7 @@ interface ApiRecognitionRow {
   remark?: string | null;
   riskLevel: RiskLevel;
   status: RowStatus;
+  reviewClass: string;
   conflictState?: string | null;
   riskReasonsJson?: string | null;
   batch?: { name: string };
@@ -55,6 +56,7 @@ function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
     amount: Number(row.amount) || 0,
     risk: row.riskLevel,
     status: row.status,
+    reviewClass: row.reviewClass ?? "pending_review",
     conflictReason: reasons.length ? reasons.join("、") : undefined,
     remark: row.remark ?? "",
     updatedAt: "",
@@ -192,6 +194,7 @@ export function ResultsPage() {
               <th className={tableCellClass}>金额</th>
               <th className={tableCellClass}>风险</th>
               <th className={tableCellClass}>状态</th>
+              <th className={tableCellClass}>标识类别</th>
               <th className={tableCellClass}>冲突原因</th>
               <th className={tableCellClass}>操作</th>
             </tr>
@@ -212,6 +215,7 @@ export function ResultsPage() {
                   <td className={tableCellClass}>{formatCurrency(row.amount)}</td>
                   <td className={tableCellClass}><RiskBadge risk={row.risk} /></td>
                   <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
+                  <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
                   <td className={tableCellClass}>{row.conflictReason ?? "-"}</td>
                   <td className={tableCellClass}>
                     <div className="flex gap-1">
@@ -241,7 +245,7 @@ export function ResultsPage() {
               ))
             ) : (
               <tr>
-                <td className={tableCellClass} colSpan={14}>
+                <td className={tableCellClass} colSpan={15}>
                   <span className="text-muted-foreground">{isLoading ? "加载中..." : "没有符合条件的记录"}</span>
                 </td>
               </tr>

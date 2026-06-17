@@ -1,11 +1,11 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
-import { RowStatusBadge, RiskBadge } from "@/components/ui/status";
+import { ApprovalModeBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
@@ -24,6 +24,7 @@ interface ApiRow {
   amount: number;
   riskLevel: RiskLevel;
   status: RowStatus;
+  reviewClass: string;
   riskReasonsJson?: string | null;
 }
 
@@ -48,7 +49,12 @@ interface ApiDocument {
 }
 
 interface BatchDetail {
-  batch: { id: string; name: string; documents: Array<{ id: string; originalName: string; riskLevel: RiskLevel }> };
+  batch: {
+    id: string;
+    name: string;
+    approvalMode: string;
+    documents: Array<{ id: string; originalName: string; riskLevel: RiskLevel }>;
+  };
 }
 
 export function ReviewPage() {
@@ -56,6 +62,12 @@ export function ReviewPage() {
   const [riskOpen, setRiskOpen] = useState(false);
   const [override, setOverride] = useState<string | null>(null);
   const [imageErrorId, setImageErrorId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+
+  function selectDoc(id: string) {
+    setOverride(id);
+    setZoom(1);
+  }
 
   const { data: batchData } = useQuery<{ batches: Array<{ id: string }> }>({
     queryKey: ["batches"],
@@ -94,7 +106,7 @@ export function ReviewPage() {
   function goTo(offset: number) {
     if (selectedIndex < 0) return;
     const next = documents[selectedIndex + offset];
-    if (next) setOverride(next.id);
+    if (next) selectDoc(next.id);
   }
 
   if (!activeBatchId) {
@@ -116,8 +128,11 @@ export function ReviewPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">审核工作台</h1>
-          <p className="mt-1 text-sm text-muted-foreground">左侧查看原图，右侧修正识别结果，底部按文档切换。</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">审核工作台</h1>
+            {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">左侧查看原图（可缩放），右侧核对识别结果并标注审核类别。</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="secondary" onClick={() => goTo(-1)} disabled={selectedIndex <= 0}>
@@ -148,18 +163,39 @@ export function ReviewPage() {
             <PanelTitle>{document?.originalName ?? "加载中..."}</PanelTitle>
             {document ? <RiskBadge risk={document.riskLevel} /> : null}
           </PanelHeader>
-          <div className="flex min-h-[430px] flex-1 items-center justify-center bg-muted p-4">
+          <div className="flex items-center gap-1 border-b border-border px-4 py-2">
+            <Button size="icon" variant="ghost" aria-label="放大" onClick={() => setZoom((z) => Math.min(5, Number((z + 0.25).toFixed(2))))}>
+              <ZoomIn size={15} />
+            </Button>
+            <Button size="icon" variant="ghost" aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))}>
+              <ZoomOut size={15} />
+            </Button>
+            <Button size="icon" variant="ghost" aria-label="适应窗口" onClick={() => setZoom(1)}>
+              <Maximize2 size={15} />
+            </Button>
+            <span className="ml-1 text-xs text-muted-foreground">{Math.round(zoom * 100)}%</span>
+            <span className="ml-auto text-[11px] text-muted-foreground">Ctrl+滚轮缩放</span>
+          </div>
+          <div
+            className="flex min-h-[430px] flex-1 items-start justify-center overflow-auto bg-muted p-4"
+            onWheel={(event) => {
+              if (!event.ctrlKey) return;
+              event.preventDefault();
+              setZoom((z) => Math.min(5, Math.max(0.25, Number((z - Math.sign(event.deltaY) * 0.25).toFixed(2)))));
+            }}
+          >
             {selectedId && imageErrorId !== selectedId ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={selectedId}
                 src={apiPaths.documentImage(selectedId)}
                 alt={document?.originalName ?? "单据原图"}
-                className="max-h-[560px] max-w-full rounded border border-border bg-white object-contain shadow-sm"
+                style={{ width: `${zoom * 100}%`, maxWidth: zoom <= 1 ? "100%" : "none" }}
+                className="h-auto rounded border border-border bg-white object-contain shadow-sm"
                 onError={() => setImageErrorId(selectedId)}
               />
             ) : (
-              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <div className="flex flex-col items-center gap-2 self-center text-muted-foreground">
                 <ImageOff size={28} />
                 <span className="text-xs">原图不可用（未上传或文件缺失）</span>
               </div>
@@ -170,7 +206,7 @@ export function ReviewPage() {
               {documents.map((doc) => (
                 <button
                   key={doc.id}
-                  onClick={() => setOverride(doc.id)}
+                  onClick={() => selectDoc(doc.id)}
                   className={`w-28 shrink-0 rounded-md border p-1 text-left ${
                     doc.id === selectedId ? "border-primary" : "border-border"
                   } bg-surface`}
@@ -203,6 +239,7 @@ export function ReviewPage() {
                     <th className={tableCellClass}>单价</th>
                     <th className={tableCellClass}>金额</th>
                     <th className={tableCellClass}>状态</th>
+                    <th className={tableCellClass}>标识类别</th>
                     <th className={tableCellClass}>操作</th>
                   </tr>
                 </thead>
@@ -218,6 +255,7 @@ export function ReviewPage() {
                         <td className={tableCellClass}>{formatCurrency(Number(row.price))}</td>
                         <td className={tableCellClass}>{formatCurrency(Number(row.amount))}</td>
                         <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
+                        <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
                         <td className={tableCellClass}>
                           <Button
                             size="sm"
@@ -232,7 +270,7 @@ export function ReviewPage() {
                     ))
                   ) : (
                     <tr>
-                      <td className={tableCellClass} colSpan={9}>
+                      <td className={tableCellClass} colSpan={10}>
                         <span className="text-muted-foreground">{isLoading ? "加载中..." : "该文档暂无识别行"}</span>
                       </td>
                     </tr>
