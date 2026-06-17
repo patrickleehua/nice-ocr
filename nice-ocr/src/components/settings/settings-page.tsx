@@ -25,6 +25,8 @@ interface SettingsPayload {
     secondaryProviderKey: string | null;
     systemPrompt: string;
     userPrompt: string;
+    auditSampleRate: number;
+    auditProviderKey: string | null;
   };
   providers: ProviderForm[];
 }
@@ -176,6 +178,26 @@ export function SettingsPage() {
                   value={draft.defaults.secondaryProviderKey}
                   providers={draft.providers}
                   onChange={(value) => updateDefaults("secondaryProviderKey", value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3">
+              <div className="text-sm font-medium">审核（确认后二次复查）</div>
+              <p className="text-xs text-muted-foreground">
+                对「机器自动通过」的行做规则/统计预筛 + 第三次独立 AI 交叉验证，存疑行进复审队列交人工。手动在批次/审核台点「运行审核」触发。
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ProviderSelect
+                  label="审核模型（第三次复核）"
+                  value={draft.defaults.auditProviderKey}
+                  providers={draft.providers}
+                  onChange={(value) => updateDefaults("auditProviderKey", value)}
+                />
+                <NumberField
+                  label="干净行抽样率（0~1）"
+                  value={draft.defaults.auditSampleRate}
+                  onChange={(value) => updateDefaults("auditSampleRate", value)}
                 />
               </div>
             </div>

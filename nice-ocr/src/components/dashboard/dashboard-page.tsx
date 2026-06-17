@@ -23,6 +23,7 @@ interface DashboardSummary {
     autoApprovedRows: number;
     humanConfirmedRows: number;
     autoApprovalRate: number;
+    flaggedRows: number;
   };
   activeBatch: { id: string; name: string; status: string; documents: number; rows: number } | null;
   recentFailures: Array<{ id: string; fileName: string; risk: RiskLevel; reason: string; updatedAt: string }>;
@@ -97,7 +98,14 @@ export function DashboardPage() {
         <Panel>
           <PanelHeader>
             <PanelTitle>审核进度</PanelTitle>
-            <span className="text-xs text-muted-foreground">自动通过率 {metrics?.autoApprovalRate ?? 0}%</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">自动通过率 {metrics?.autoApprovalRate ?? 0}%</span>
+              {metrics?.flaggedRows ? (
+                <Button size="sm" variant="ghost" asChild>
+                  <Link href="/results?audit=flagged">前往复审</Link>
+                </Button>
+              ) : null}
+            </div>
           </PanelHeader>
           <div className="px-4 py-4">
             <div className="mb-4 flex items-center justify-between text-xs text-muted-foreground">
@@ -109,10 +117,11 @@ export function DashboardPage() {
             <div className="h-2 overflow-hidden rounded-full bg-muted">
               <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
             </div>
-            <div className="mt-6 grid grid-cols-3 gap-3">
+            <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
               <StatTile label="AI自动通过" value={metrics?.autoApprovedRows ?? 0} tone="text-success-strong" />
               <StatTile label="人工确认" value={metrics?.humanConfirmedRows ?? 0} tone="text-info-strong" />
               <StatTile label="待人工复核" value={metrics?.pendingRows ?? 0} tone="text-warning-strong" />
+              <StatTile label="待复审" value={metrics?.flaggedRows ?? 0} tone="text-danger-strong" />
             </div>
           </div>
         </Panel>

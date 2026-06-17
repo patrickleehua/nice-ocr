@@ -44,6 +44,17 @@ export function ReviewClassBadge({ value }: { value: string }) {
   return <Badge tone={item.tone}>{item.label}</Badge>;
 }
 
+export function AuditStateBadge({ value }: { value: string }) {
+  const map: Record<string, { label: string; tone: "success" | "info" | "warning" | "danger" | "neutral" }> = {
+    none: { label: "未审核", tone: "neutral" },
+    passed: { label: "审核通过", tone: "success" },
+    flagged: { label: "待复审", tone: "danger" },
+    reviewed: { label: "已复审", tone: "info" },
+  };
+  const item = map[value] ?? map.none;
+  return <Badge tone={item.tone}>{item.label}</Badge>;
+}
+
 const approvalModeLabels: Record<string, string> = {
   manual: "全人工",
   hybrid: "混合(AI+人工)",

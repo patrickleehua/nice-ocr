@@ -1,12 +1,12 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, Search, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, Search, ShieldCheck, Wand2, ZoomIn, ZoomOut } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
-import { ApprovalModeBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
+import { ApprovalModeBadge, AuditStateBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { EditableCell } from "@/components/ui/editable-cell";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
@@ -28,6 +28,9 @@ interface ApiRow {
   status: RowStatus;
   reviewClass: string;
   riskReasonsJson?: string | null;
+  auditState: string;
+  auditNote?: string | null;
+  auditSuggestionJson?: string | null;
 }
 
 interface ApiAttempt {
@@ -149,6 +152,24 @@ export function ReviewPage() {
     updateRow.mutate({ id, patch: { [field]: numeric ? Number(raw || 0) : raw } });
   }
 
+  const runAudit = useMutation({
+    mutationFn: () => apiJson(apiPaths.batchAudit(activeBatchId as string), { method: "POST" }),
+    onSuccess: invalidate,
+  });
+
+  function adoptSuggestion(row: ApiRow) {
+    if (!row.auditSuggestionJson) return;
+    try {
+      const s = JSON.parse(row.auditSuggestionJson) as Partial<ApiRow>;
+      updateRow.mutate({
+        id: row.id,
+        patch: { code: s.code ?? "", name: s.name, unit: s.unit ?? "", qty: s.qty, price: s.price, amount: s.amount },
+      });
+    } catch {
+      /* 建议值解析失败则忽略 */
+    }
+  }
+
   function goTo(offset: number) {
     if (selectedIndex < 0) return;
     const next = documents[selectedIndex + offset];
@@ -200,6 +221,15 @@ export function ReviewPage() {
             disabled={selectedIndex < 0 || selectedIndex >= documents.length - 1}
           >
             下一张<ChevronRight size={15} />
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => runAudit.mutate()}
+            disabled={runAudit.isPending}
+            title="对本批次机器自动通过的行做二次复查（需 worker 运行）"
+          >
+            <ShieldCheck size={15} />运行审核
           </Button>
           <Button
             size="sm"
@@ -398,16 +428,38 @@ export function ReviewPage() {
                           onCommit={(next) => commitField(row.id, "amount", next)}
                         />
                         <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
-                        <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
                         <td className={tableCellClass}>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => confirmRows.mutate({ rowIds: [row.id] })}
-                            disabled={confirmRows.isPending || row.status === "confirmed"}
-                          >
-                            确认
-                          </Button>
+                          <div className="flex flex-col items-start gap-1">
+                            <ReviewClassBadge value={row.reviewClass} />
+                            {row.auditState && row.auditState !== "none" ? (
+                              <span title={row.auditNote ?? undefined}>
+                                <AuditStateBadge value={row.auditState} />
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className={tableCellClass}>
+                          <div className="flex gap-1">
+                            {row.auditState === "flagged" && row.auditSuggestionJson ? (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => adoptSuggestion(row)}
+                                disabled={updateRow.isPending}
+                                title={`采纳审核建议：${row.auditNote ?? ""}`}
+                              >
+                                <Wand2 size={14} />采纳
+                              </Button>
+                            ) : null}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => confirmRows.mutate({ rowIds: [row.id] })}
+                              disabled={confirmRows.isPending || row.status === "confirmed"}
+                            >
+                              确认
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))
