@@ -152,8 +152,13 @@ describe("workflow integration", () => {
         "AMOUNT_MISMATCH",
       ]);
       assert.equal(auditCount, 1);
-      assert.equal(excluded.status, "excluded");
-      assert.ok(excluded.deletedAt);
+      assert.equal(excluded?.status, "excluded");
+      assert.ok(excluded?.deletedAt);
+      // 软删除应留痕 AuditLog(action=exclude)，便于追溯。
+      const excludeAuditCount = await tx.auditLog.count({
+        where: { entityType: "RecognitionRow", entityId: original.id, action: "exclude" },
+      });
+      assert.equal(excludeAuditCount, 1);
     });
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Search, ShieldCheck, Wand2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Search, ShieldCheck, Trash2, Wand2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -120,6 +120,8 @@ export function ReviewPage() {
   const [docFilter, setDocFilter] = useState<ReviewState | "all">("all");
   const [docPage, setDocPage] = useState(1);
   const [focus, setFocus] = useState(false);
+  // 行内删除二次确认：记录待删除行 id。
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function selectDoc(id: string) {
     setOverride(id);
@@ -170,6 +172,14 @@ export function ReviewPage() {
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
       apiJson(apiPaths.row(id), { method: "PATCH", body: JSON.stringify(patch) }),
     onSuccess: invalidate,
+  });
+
+  const deleteRow = useMutation({
+    mutationFn: (id: string) => apiJson(apiPaths.row(id), { method: "DELETE" }),
+    onSuccess: () => {
+      setDeletingId(null);
+      invalidate();
+    },
   });
 
   function commitField(id: string, field: FieldDef, raw: string) {
@@ -512,27 +522,53 @@ export function ReviewPage() {
                           </div>
                         </td>
                         <td className={tableCellClass}>
-                          <div className="flex gap-1">
-                            {row.auditState === "flagged" && row.auditSuggestionJson ? (
+                          {deletingId === row.id ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[11px] text-danger-strong">删除此行？</span>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => deleteRow.mutate(row.id)}
+                                disabled={deleteRow.isPending}
+                                title="确认删除（软删除，可在审计日志追溯）"
+                              >
+                                确认
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setDeletingId(null)} disabled={deleteRow.isPending}>
+                                取消
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1">
+                              {row.auditState === "flagged" && row.auditSuggestionJson ? (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => adoptSuggestion(row)}
+                                  disabled={updateRow.isPending}
+                                  title={`采纳审核建议：${row.auditNote ?? ""}`}
+                                >
+                                  <Wand2 size={14} />采纳
+                                </Button>
+                              ) : null}
                               <Button
                                 size="sm"
                                 variant="secondary"
-                                onClick={() => adoptSuggestion(row)}
-                                disabled={updateRow.isPending}
-                                title={`采纳审核建议：${row.auditNote ?? ""}`}
+                                onClick={() => confirmRows.mutate({ rowIds: [row.id] })}
+                                disabled={confirmRows.isPending || row.status === "confirmed"}
                               >
-                                <Wand2 size={14} />采纳
+                                确认
                               </Button>
-                            ) : null}
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => confirmRows.mutate({ rowIds: [row.id] })}
-                              disabled={confirmRows.isPending || row.status === "confirmed"}
-                            >
-                              确认
-                            </Button>
-                          </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setDeletingId(row.id)}
+                                title="删除此行"
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))

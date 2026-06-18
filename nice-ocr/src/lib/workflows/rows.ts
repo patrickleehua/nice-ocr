@@ -120,9 +120,29 @@ export async function updateRecognitionRow(
   return row;
 }
 
+/**
+ * 软删除（排除）识别行：置 deletedAt + status=excluded，并留痕审计日志。
+ * 删除是不可逆操作，与 updateRecognitionRow 一样写 AuditLog 以便追溯。
+ * 行不存在（或已删除）时返回 null，调用方应回 404。
+ */
 export async function excludeRecognitionRow(id: string, db: DbClient = prisma) {
-  return db.recognitionRow.update({
+  const before = await db.recognitionRow.findUnique({ where: { id } });
+  if (!before || before.deletedAt) return null;
+
+  const row = await db.recognitionRow.update({
     where: { id },
     data: { deletedAt: new Date(), status: "excluded" },
   });
+
+  await db.auditLog.create({
+    data: {
+      entityType: "RecognitionRow",
+      entityId: id,
+      action: "exclude",
+      beforeJson: JSON.stringify(before),
+      afterJson: JSON.stringify(row),
+    },
+  });
+
+  return row;
 }

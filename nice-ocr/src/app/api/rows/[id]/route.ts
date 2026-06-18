@@ -23,5 +23,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return NextResponse.json({ row: await excludeRecognitionRow(id) });
+  const row = await excludeRecognitionRow(id);
+  if (!row) return NextResponse.json({ error: "Row not found" }, { status: 404 });
+  return NextResponse.json({ row });
 }
