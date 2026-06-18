@@ -42,25 +42,39 @@ export async function enqueueAuditJob(documentId: string, batchId: string, db: D
   return enqueueRecognitionJob(documentId, batchId, "audit", db);
 }
 
+/**
+ * 乐观锁原子领取下一个待处理 job。
+ *
+ * 先选候选，再用带 `status: "queued"` 条件的 updateMany 抢占；只有 count===1 才算领到，
+ * 否则说明已被并发 worker 抢走，重试下一个候选。这样消除了“先 findFirst 再 update”
+ * 的读改竞态——多 worker 进程 / worker 内并发领取都不会重复处理同一 job。
+ */
 export async function claimNextJob(workerId: string, db: DbClient = prisma) {
-  const job = await db.recognitionJob.findFirst({
-    where: {
-      status: "queued",
-      nextRunAt: { lte: new Date() },
-    },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-  });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const candidate = await db.recognitionJob.findFirst({
+      where: { status: "queued", nextRunAt: { lte: new Date() } },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
+    });
+    if (!candidate) return null;
 
-  if (!job) return null;
+    const claimed = await db.recognitionJob.updateMany({
+      where: { id: candidate.id, status: "queued" },
+      data: {
+        status: "active",
+        lockedAt: new Date(),
+        lockedBy: workerId,
+        attemptsMade: { increment: 1 },
+      },
+    });
 
-  return db.recognitionJob.update({
-    where: { id: job.id },
-    data: {
-      status: "active",
-      lockedAt: new Date(),
-      lockedBy: workerId,
-      attemptsMade: { increment: 1 },
-    },
-    include: { document: true, batch: true },
-  });
+    if (claimed.count === 1) {
+      return db.recognitionJob.findUnique({
+        where: { id: candidate.id },
+        include: { document: true, batch: true },
+      });
+    }
+    // 被并发抢走，试下一个候选。
+  }
+  return null;
 }
