@@ -12,6 +12,7 @@ export function RiskBadge({ risk }: { risk: RiskLevel }) {
 
 export function BatchStatusBadge({ status }: { status: BatchStatus }) {
   const map = {
+    draft: { label: "草稿", tone: "neutral" as const },
     processing: { label: "处理中", tone: "info" as const },
     needs_review: { label: "待核查", tone: "warning" as const },
     completed: { label: "完成", tone: "success" as const },
@@ -19,7 +20,8 @@ export function BatchStatusBadge({ status }: { status: BatchStatus }) {
     paused: { label: "已暂停", tone: "warning" as const },
     imported: { label: "导入", tone: "neutral" as const },
   };
-  return <Badge tone={map[status].tone}>{map[status].label}</Badge>;
+  const item = map[status] ?? { label: status, tone: "neutral" as const };
+  return <Badge tone={item.tone}>{item.label}</Badge>;
 }
 
 export function RowStatusBadge({ status }: { status: RowStatus }) {

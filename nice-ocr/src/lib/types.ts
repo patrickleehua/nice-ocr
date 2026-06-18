@@ -1,4 +1,5 @@
 export type BatchStatus =
+  | "draft"
   | "processing"
   | "needs_review"
   | "completed"
