@@ -49,9 +49,9 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
   };
 
   const uploadFiles = useMutation({
-    mutationFn: (files: FileList) => {
+    mutationFn: (files: File[]) => {
       const formData = new FormData();
-      Array.from(files).forEach((file) => formData.append("files", file));
+      files.forEach((file) => formData.append("files", file));
       return apiUpload(apiPaths.batchUpload(batchId), formData);
     },
     onSuccess: invalidate,
@@ -75,8 +75,10 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
         accept="image/*,application/pdf,.pdf,.zip,application/zip"
         className="hidden"
         onChange={(event) => {
-          if (event.target.files?.length) uploadFiles.mutate(event.target.files);
+          // 同步快照成 File[]，再清空 input；否则异步 mutation 读到的是被 value="" 清空的空 FileList。
+          const files = event.target.files ? Array.from(event.target.files) : [];
           event.target.value = "";
+          if (files.length) uploadFiles.mutate(files);
         }}
       />
 
