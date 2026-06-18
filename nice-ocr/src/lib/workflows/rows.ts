@@ -146,3 +146,91 @@ export async function excludeRecognitionRow(id: string, db: DbClient = prisma) {
 
   return row;
 }
+
+export type RowCreateInput = {
+  /** 所属文档；新行从该文档继承 batchId。 */
+  documentId: string;
+  /** 在此行下方插入；缺省则追加到文档末尾。 */
+  afterRowId?: string | null;
+  code?: string | null;
+  name?: string;
+  unit?: string | null;
+  qty?: number;
+  price?: number;
+  amount?: number;
+  remark?: string | null;
+  /** 场景声明的非核心字段，写入 extraJson。 */
+  extra?: Record<string, unknown>;
+};
+
+/**
+ * 人工新建一条识别行（审核台「新增行」）。
+ * - documentId 必填，从所属文档继承 batchId；文档不存在返回 null（调用方回 404）。
+ * - afterRowId 指定且有效时在该行下方插入：新行 rowIndex = 目标行+1，并把其后行整体下移，
+ *   保持 rowIndex 顺序连续（文档详情按 rowIndex 升序展示）；否则追加到末尾（max+1）。
+ * - 跑 validateRow 计算 riskLevel/reasons；reviewClass=human、status=pending；写 AuditLog(action=create)。
+ */
+export async function createRecognitionRow(input: RowCreateInput, db: DbClient = prisma) {
+  const document = await db.document.findUnique({ where: { id: input.documentId } });
+  if (!document) return null;
+
+  const after = input.afterRowId
+    ? await db.recognitionRow.findUnique({ where: { id: input.afterRowId } })
+    : null;
+
+  let rowIndex: number;
+  if (after && after.documentId === input.documentId && !after.deletedAt) {
+    rowIndex = after.rowIndex + 1;
+    // 其后行整体下移，给新行让出位置。
+    await db.recognitionRow.updateMany({
+      where: { documentId: input.documentId, deletedAt: null, rowIndex: { gte: rowIndex } },
+      data: { rowIndex: { increment: 1 } },
+    });
+  } else {
+    const max = await db.recognitionRow.aggregate({
+      where: { documentId: input.documentId, deletedAt: null },
+      _max: { rowIndex: true },
+    });
+    rowIndex = (max._max.rowIndex ?? 0) + 1;
+  }
+
+  const validation = validateRow({
+    code: input.code ?? "",
+    name: input.name ?? "",
+    qty: Number(input.qty ?? 0),
+    price: Number(input.price ?? 0),
+    amount: Number(input.amount ?? 0),
+  });
+
+  const row = await db.recognitionRow.create({
+    data: {
+      batchId: document.batchId,
+      documentId: input.documentId,
+      rowIndex,
+      code: input.code ?? null,
+      name: input.name ?? "",
+      unit: input.unit ?? null,
+      qty: Number(input.qty ?? 0),
+      price: Number(input.price ?? 0),
+      amount: Number(input.amount ?? 0),
+      remark: input.remark ?? null,
+      extraJson: input.extra && Object.keys(input.extra).length ? JSON.stringify(input.extra) : "{}",
+      status: "pending",
+      reviewClass: "human",
+      riskLevel: validation.riskLevel,
+      riskReasonsJson: JSON.stringify(validation.reasons),
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      entityType: "RecognitionRow",
+      entityId: row.id,
+      action: "create",
+      beforeJson: null,
+      afterJson: JSON.stringify(row),
+    },
+  });
+
+  return row;
+}

@@ -1,8 +1,8 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Search, ShieldCheck, Trash2, Wand2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
@@ -122,6 +122,8 @@ export function ReviewPage() {
   const [focus, setFocus] = useState(false);
   // 行内删除二次确认：记录待删除行 id。
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 新增草稿行：undefined=无草稿；null=末尾追加；string=在该行下方插入。
+  const [draftAfterId, setDraftAfterId] = useState<string | null | undefined>(undefined);
 
   function selectDoc(id: string) {
     setOverride(id);
@@ -181,6 +183,35 @@ export function ReviewPage() {
       invalidate();
     },
   });
+
+  const createRow = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      apiJson(apiPaths.rows, { method: "POST", body: JSON.stringify(payload) }),
+    onSuccess: () => {
+      setDraftAfterId(undefined);
+      invalidate();
+    },
+  });
+
+  // 保存草稿行：按 field-schema 拆分核心列 / extra 列，afterRowId 决定插入位置（null=末尾）。
+  function saveDraft(values: Record<string, string>) {
+    if (!selectedId) return;
+    const core: Record<string, unknown> = {};
+    const extra: Record<string, unknown> = {};
+    for (const field of fields) {
+      if (!field.editable) continue;
+      const raw = values[field.key] ?? "";
+      const value = field.type === "number" ? Number(raw || 0) : raw;
+      if (isCoreColumn(field.key)) core[field.key] = value;
+      else extra[field.key] = value;
+    }
+    createRow.mutate({
+      documentId: selectedId,
+      afterRowId: draftAfterId ?? null,
+      ...core,
+      ...(Object.keys(extra).length ? { extra } : {}),
+    });
+  }
 
   function commitField(id: string, field: FieldDef, raw: string) {
     const value = field.type === "number" ? Number(raw || 0) : raw;
@@ -478,7 +509,18 @@ export function ReviewPage() {
           <Panel className={cn(focus && "flex min-h-0 flex-1 flex-col")}>
             <PanelHeader>
               <PanelTitle>识别明细</PanelTitle>
-              <span className="text-xs text-muted-foreground">{rows.length} 行 · 点击单元格可编辑</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{rows.length} 行 · 点击单元格可编辑</span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDraftAfterId(null)}
+                  disabled={!selectedId || draftAfterId !== undefined}
+                  title="在明细末尾新增一行（也可在某行右侧点「+」就近插入）"
+                >
+                  <Plus size={14} />新增行
+                </Button>
+              </div>
             </PanelHeader>
             <div className={cn("overflow-auto", focus ? "min-h-0 flex-1" : "max-h-[360px]")}>
               <DataTable>
@@ -498,7 +540,8 @@ export function ReviewPage() {
                 <tbody>
                   {rows.length ? (
                     rows.map((row, index) => (
-                      <tr key={row.id} className="hover:bg-muted/40">
+                      <Fragment key={row.id}>
+                      <tr className="hover:bg-muted/40">
                         <td className={tableCellClass}>{index + 1}</td>
                         {fields.map((field) => (
                           <FieldCell
@@ -562,6 +605,15 @@ export function ReviewPage() {
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                onClick={() => setDraftAfterId(row.id)}
+                                disabled={draftAfterId !== undefined}
+                                title="在此行下方插入新行"
+                              >
+                                <Plus size={14} />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
                                 onClick={() => setDeletingId(row.id)}
                                 title="删除此行"
                               >
@@ -571,14 +623,31 @@ export function ReviewPage() {
                           )}
                         </td>
                       </tr>
+                      {draftAfterId === row.id ? (
+                        <DraftRow
+                          fields={fields}
+                          isPending={createRow.isPending}
+                          onSave={saveDraft}
+                          onCancel={() => setDraftAfterId(undefined)}
+                        />
+                      ) : null}
+                      </Fragment>
                     ))
-                  ) : (
+                  ) : draftAfterId === null ? null : (
                     <tr>
                       <td className={tableCellClass} colSpan={4 + fields.length}>
                         <span className="text-muted-foreground">{isLoading ? "加载中..." : "该文档暂无识别行"}</span>
                       </td>
                     </tr>
                   )}
+                  {draftAfterId === null ? (
+                    <DraftRow
+                      fields={fields}
+                      isPending={createRow.isPending}
+                      onSave={saveDraft}
+                      onCancel={() => setDraftAfterId(undefined)}
+                    />
+                  ) : null}
                 </tbody>
               </DataTable>
             </div>
@@ -638,5 +707,73 @@ function EmptyState({ message }: { message: string }) {
         {message}
       </div>
     </div>
+  );
+}
+
+/**
+ * 内联新增草稿行：按 field-schema 渲染可编辑字段，本地 state 驱动。
+ * 商品名称（name）为必填，未填时禁用保存（与 validateRow 的 INVALID_PRODUCT_NAME 规则一致）。
+ * 列结构与明细表对齐：行号 + 各字段 + 状态/标识类别（合并占位）+ 操作。
+ */
+function DraftRow({
+  fields,
+  isPending,
+  onSave,
+  onCancel,
+}: {
+  fields: FieldDef[];
+  isPending: boolean;
+  onSave: (values: Record<string, string>) => void;
+  onCancel: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const nameFilled = (values.name ?? "").trim().length > 0;
+  return (
+    <tr className="bg-primary/5">
+      <td className={tableCellClass}>
+        <span className="inline-flex items-center rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+          新
+        </span>
+      </td>
+      {fields.map((field) => (
+        <td key={field.key} className={cn(tableCellClass, "p-1")}>
+          {field.editable ? (
+            <input
+              type={field.type === "number" ? "number" : "text"}
+              step={field.type === "number" ? "any" : undefined}
+              value={values[field.key] ?? ""}
+              onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+              placeholder={field.label}
+              autoFocus={field.key === "name"}
+              className={cn(
+                "h-7 w-full min-w-16 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary",
+                (field.align ?? (field.type === "number" ? "right" : "left")) === "right" && "text-right",
+              )}
+            />
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+      ))}
+      <td className={tableCellClass} colSpan={2}>
+        <span className="text-[11px] text-muted-foreground">待保存</span>
+      </td>
+      <td className={tableCellClass}>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => onSave(values)}
+            disabled={isPending || !nameFilled}
+            title={nameFilled ? "保存新行" : "请先填写商品名称"}
+          >
+            <Check size={14} />保存
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
+            <X size={14} />取消
+          </Button>
+        </div>
+      </td>
+    </tr>
   );
 }

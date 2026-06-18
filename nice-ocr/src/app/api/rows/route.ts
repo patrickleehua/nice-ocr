@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { createRecognitionRow } from "@/lib/workflows/rows";
 
 export const runtime = "nodejs";
 
@@ -31,4 +32,27 @@ export async function GET(request: Request) {
   ]);
 
   return NextResponse.json({ rows, total, page, pageSize });
+}
+
+export async function POST(request: Request) {
+  const body = await request.json();
+  if (!body.documentId) {
+    return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+  }
+
+  const row = await createRecognitionRow({
+    documentId: String(body.documentId),
+    afterRowId: body.afterRowId ?? null,
+    code: body.code,
+    name: body.name,
+    unit: body.unit,
+    qty: body.qty,
+    price: body.price,
+    amount: body.amount,
+    remark: body.remark,
+    extra: body.extra,
+  });
+
+  if (!row) return NextResponse.json({ error: "Document not found" }, { status: 404 });
+  return NextResponse.json({ row }, { status: 201 });
 }
