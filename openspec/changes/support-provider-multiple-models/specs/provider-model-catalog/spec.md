@@ -22,8 +22,8 @@ The system SHALL allow operators to manually add, edit, enable, disable, and pri
 - **WHEN** a provider has both enabled and disabled model options
 - **THEN** automatic recognition selection only considers enabled model options
 
-### Requirement: OpenAI-compatible model import
-The system SHALL provide a model import action for OpenAI-compatible providers that calls a models endpoint derived from the provider Base URL by convention.
+### Requirement: Optional OpenAI-compatible model import
+The system SHALL provide an optional model import action for OpenAI-compatible providers that calls a models endpoint derived from the provider Base URL by convention. The system MUST NOT require this import action before operators can save providers, manage models, or run recognition.
 
 #### Scenario: Base URL already includes v1
 - **WHEN** an OpenAI-compatible provider has Base URL `https://api.example.com/v1`
@@ -40,6 +40,10 @@ The system SHALL provide a model import action for OpenAI-compatible providers t
 #### Scenario: Import unavailable endpoint
 - **WHEN** the derived models endpoint is unreachable, unauthorized, times out, or returns an unsupported response
 - **THEN** the system reports the import failure and does not modify the existing model catalog
+
+#### Scenario: Manual use without import
+- **WHEN** an operator manually adds model options and never runs model import
+- **THEN** the system allows those model options to be selected, tested, and used for recognition
 
 ### Requirement: Model import is idempotent and non-destructive
 The system SHALL upsert imported model options without deleting or disabling existing model options that are absent from the latest import response.

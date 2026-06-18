@@ -1,6 +1,6 @@
 ## Context
 
-The settings module currently stores `AiProviderConfig.model` on the provider row, so one provider credential/base URL can only represent one model. Operators who want to use two models from the same OpenAI-compatible provider must duplicate the provider row and repeat credentials, which makes primary/secondary/audit routing harder to reason about.
+The settings module currently stores `AiProviderConfig.model` on the provider row, so one provider credential/base URL can only represent one model. Operators who want to use two models from the same provider must duplicate the provider row and repeat credentials, which makes primary/secondary/audit routing harder to reason about.
 
 The project is still in development, so database tables can be changed to fit the business model. Per project convention, table relationships must not use cascading behavior; cleanup and fallback behavior should live in application code.
 
@@ -9,8 +9,9 @@ The project is still in development, so database tables can be changed to fit th
 **Goals:**
 
 - Represent one AI provider with many model options.
-- Import model options from an OpenAI-compatible models endpoint derived from the provider Base URL.
-- Keep import best-effort: failed imports leave the existing provider and model catalog unchanged.
+- Allow operators to fully manage provider model options manually.
+- Offer optional model import from an OpenAI-compatible models endpoint derived from the provider Base URL.
+- Keep import best-effort and non-blocking: failed imports leave the existing provider and model catalog unchanged and do not prevent manual model management.
 - Let recognition defaults, batch overrides, provider tests, and worker calls select an exact provider/model pair.
 - Preserve recognition attempt metadata as `providerKey` plus concrete `model`.
 
@@ -44,13 +45,13 @@ Alternative considered: store `AiProviderModel.id` in settings and batches. That
 
 ### Derive the OpenAI-compatible models endpoint by convention
 
-For `openai_responses` providers, implement a helper that derives the models endpoint from Base URL without adding a new setting:
+For `openai_responses` providers, implement an optional import helper that derives the models endpoint from Base URL without adding a new setting:
 
 - Trim trailing slashes.
 - If the path already ends with `/v1`, call `<baseUrl>/models`.
 - Otherwise call `<baseUrl>/v1/models`.
 
-The request uses the provider API key as a bearer token and accepts the OpenAI-compatible shape `{ data: [{ id: string, ... }] }`. It may also tolerate string entries in `data` if a compatible provider returns a simplified list. If the endpoint is unreachable, unauthorized, times out, or returns an unsupported shape, the import action reports the failure and makes no catalog changes.
+The request uses the provider API key as a bearer token and accepts the OpenAI-compatible shape `{ data: [{ id: string, ... }] }`. It may also tolerate string entries in `data` if a compatible provider returns a simplified list. If the endpoint is unreachable, unauthorized, times out, or returns an unsupported shape, the import action reports the failure and makes no catalog changes. Provider save, manual model creation, and recognition routing must not depend on this endpoint.
 
 Alternative considered: expose an import URL field. That adds configuration surface before there is evidence the convention is insufficient.
 
@@ -75,7 +76,7 @@ type RecognitionTarget = {
 
 ## Risks / Trade-offs
 
-- Non-standard providers may not support the derived models endpoint -> keep manual model creation/editing and show an import failure without changing existing rows.
+- Non-standard providers may not support the derived models endpoint -> keep manual model creation/editing as the primary path and show an import failure without changing existing rows.
 - Imported model lists may contain models that do not support vision or structured output -> allow per-model testing and enable/disable controls; future capability tags can be added to model metadata.
 - Defaults that reference removed models can drift -> resolution must validate enabled provider/model pairs and fall back deterministically by priority.
 - Large provider catalogs may clutter settings -> keep model rows compact and sortable now; add filtering later if needed.
@@ -86,7 +87,7 @@ type RecognitionTarget = {
 1. Add `AiProviderModel` without cascade relationships and migrate existing `AiProviderConfig.model` values into one model row per provider.
 2. Add batch model override columns and extend the recognition defaults JSON parser/writer to include primary, secondary, and audit model ids while accepting old provider-key-only data.
 3. Update settings APIs to return provider rows with nested model rows and to upsert provider/model data without deleting omitted models.
-4. Add the model import endpoint and endpoint-derivation helper for OpenAI-compatible providers.
+4. Add the optional model import endpoint and endpoint-derivation helper for OpenAI-compatible providers.
 5. Update recognition provider construction, provider testing, batch creation, worker resolution, and review metadata to use resolved provider/model targets.
 6. Update settings UI, seed data, README, and tests.
 
@@ -94,5 +95,5 @@ Rollback during development can reset the local database or reverse the migratio
 
 ## Open Questions
 
-- Should imported models default to enabled, or should the UI require explicit enablement after import? The proposed default is enabled to make import immediately useful.
+- Should imported models default to enabled, or should the UI require explicit enablement after import? The proposed default is enabled to make the optional import action immediately useful.
 - Should Anthropic model import be added later through a provider-specific endpoint if their API surface diverges from OpenAI-compatible `/v1/models`?
