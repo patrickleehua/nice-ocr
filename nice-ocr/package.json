@@ -14,6 +14,7 @@
     "db:migrate": "tsx scripts/backfill-provider-models.ts && prisma migrate dev",
     "db:push": "tsx scripts/backfill-provider-models.ts && prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:encrypt-secrets": "tsx scripts/encrypt-secrets.ts",
     "test": "tsx scripts/test.ts",
     "test:raw": "tsx --test \"src/**/*.test.ts\""
   },

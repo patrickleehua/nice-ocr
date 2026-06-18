@@ -3,6 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { AiProviderConfig } from "@prisma/client";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
+import { decryptSecret } from "@/lib/crypto/secret";
 import { extractionResultSchema, normalizeExtraction } from "@/lib/recognition/schema";
 import {
   defaultRecognitionPrompts,
@@ -91,7 +92,7 @@ class OpenAIResponsesProvider implements RecognitionProvider {
     this.key = config.providerKey;
     this.model = target.model.modelId;
     this.client = new OpenAI({
-      apiKey: config.apiKey ?? "",
+      apiKey: decryptSecret(config.apiKey),
       baseURL: config.baseUrl || undefined,
     });
   }
@@ -148,7 +149,7 @@ class AnthropicMessagesProvider implements RecognitionProvider {
     this.key = config.providerKey;
     this.model = target.model.modelId;
     this.client = new Anthropic({
-      apiKey: config.apiKey ?? "",
+      apiKey: decryptSecret(config.apiKey),
       baseURL: config.baseUrl || undefined,
     });
   }

@@ -1,5 +1,6 @@
 import type { AiProviderConfig, AiProviderModel } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import { decryptSecret, encryptSecretForStorage } from "@/lib/crypto/secret";
 import { normalizeApprovalMode, type ApprovalMode } from "@/lib/recognition/review";
 
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
@@ -182,7 +183,8 @@ export async function updateRecognitionDefaults(input: Partial<RecognitionDefaul
 
 export async function upsertAiProviderConfig(input: AiProviderConfigInput) {
   const normalized = normalizeProviderInput(input);
-  const apiKey = normalizeOptionalString(input.apiKey);
+  // 入库前加密：明文 → AES-256-GCM 密文；undefined（未提交）透传以保留原 Key。
+  const apiKey = encryptSecretForStorage(normalizeOptionalString(input.apiKey));
   const data = {
     providerKey: normalized.providerKey,
     displayName: normalized.displayName,
@@ -375,7 +377,7 @@ export async function importProviderModels(providerId: string, fetcher: typeof f
   try {
     response = await fetcher(endpoint, {
       method: "GET",
-      headers: { authorization: `Bearer ${provider.apiKey}` },
+      headers: { authorization: `Bearer ${decryptSecret(provider.apiKey)}` },
       signal: controller.signal,
     });
   } catch (error) {
