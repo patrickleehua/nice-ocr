@@ -7,7 +7,7 @@ import { enqueueRecognitionJob, enqueueSecondPassIfNeeded, claimNextJob } from "
 import { buildProductExport, buildRecognitionExport } from "../exports";
 import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
-import { confirmRecognitionRows, excludeRecognitionRow, updateRecognitionRow } from "../rows";
+import { confirmRecognitionRows, createRecognitionRow, excludeRecognitionRow, updateRecognitionRow } from "../rows";
 import { resolveProductConflict } from "../conflicts";
 import { buildConsensusFlags, decideRowReview } from "../../recognition/review";
 import { resolveProviderPrompts } from "../../recognition/provider";
@@ -159,6 +159,76 @@ describe("workflow integration", () => {
         where: { entityType: "RecognitionRow", entityId: original.id, action: "exclude" },
       });
       assert.equal(excludeAuditCount, 1);
+    });
+  });
+
+  it("creates rows with audit log; inline insertion shifts following rows", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "row-create-test" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "create.jpg",
+          storedPath: "",
+          hash: "row-create-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      await tx.recognitionRow.createMany({
+        data: [
+          { batchId: batch.id, documentId: document.id, rowIndex: 1, name: "苹果" },
+          { batchId: batch.id, documentId: document.id, rowIndex: 2, name: "香蕉" },
+        ],
+      });
+      const first = await tx.recognitionRow.findFirst({
+        where: { documentId: document.id, rowIndex: 1 },
+      });
+
+      // 末尾追加：rowIndex = max + 1 = 3；人工新增标记；金额自洽判低风险
+      const appended = await createRecognitionRow(
+        { documentId: document.id, name: "橙子", qty: 2, price: 3, amount: 6 },
+        tx,
+      );
+      assert.ok(appended);
+      assert.equal(appended.rowIndex, 3);
+      assert.equal(appended.reviewClass, "human");
+      assert.equal(appended.status, "pending");
+      assert.equal(appended.riskLevel, "low");
+
+      // 新建应留痕 AuditLog(action=create)
+      const createAuditCount = await tx.auditLog.count({
+        where: { entityType: "RecognitionRow", entityId: appended.id, action: "create" },
+      });
+      assert.equal(createAuditCount, 1);
+
+      // 在第 1 行下方插入：新行 rowIndex=2，原第 2、3 行整体下移到 3、4
+      const inserted = await createRecognitionRow(
+        { documentId: document.id, afterRowId: first?.id, name: "葡萄" },
+        tx,
+      );
+      assert.ok(inserted);
+      assert.equal(inserted.rowIndex, 2);
+
+      const ordered = await tx.recognitionRow.findMany({
+        where: { documentId: document.id, deletedAt: null },
+        orderBy: { rowIndex: "asc" },
+      });
+      assert.deepEqual(
+        ordered.map((row) => [row.rowIndex, row.name]),
+        [
+          [1, "苹果"],
+          [2, "葡萄"],
+          [3, "香蕉"],
+          [4, "橙子"],
+        ],
+      );
+
+      // 非法名称判高风险；文档不存在返回 null
+      const flagged = await createRecognitionRow({ documentId: document.id, name: "合计" }, tx);
+      assert.equal(flagged?.riskLevel, "high");
+      const missing = await createRecognitionRow({ documentId: "nonexistent" }, tx);
+      assert.equal(missing, null);
     });
   });
 
