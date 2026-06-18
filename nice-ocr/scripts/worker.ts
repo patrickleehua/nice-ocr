@@ -281,10 +281,27 @@ function normalize(name: string): string {
 
 // ---------- 调度 ----------
 
-async function processOne() {
-  const job = await claimNextJob(workerId);
-  if (!job) return false;
+let shuttingDown = false;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 回收孤儿 active job：被 kill / 崩溃中断的 job 会停在 status="active"，
+ * 而 claimNextJob 只领 queued，没有回收就会永久卡死该文档。把 lockedAt 早于
+ * 阈值（env.staleJobMs，默认 5min）的 active job 重置回 queued 使其可被重新领取。
+ */
+async function reclaimStaleJobs() {
+  const threshold = new Date(Date.now() - env.staleJobMs);
+  const reclaimed = await prisma.recognitionJob.updateMany({
+    where: { status: "active", lockedAt: { lt: threshold } },
+    data: { status: "queued", lockedAt: null, lockedBy: null },
+  });
+  if (reclaimed.count > 0) {
+    console.log(`${workerId} reclaimed ${reclaimed.count} stale active job(s)`);
+  }
+}
+
+/** 处理一个已领取的 job（完成 / 重试 / 失败落库）。不负责领取。 */
+async function handleClaimedJob(job: ClaimedJob) {
   try {
     if (job.type === "audit") {
       await auditDocument(job);
@@ -295,7 +312,6 @@ async function processOne() {
       where: { id: job.id },
       data: { status: "completed", lockedAt: null, lockedBy: null },
     });
-    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const shouldRetry = job.attemptsMade < job.maxAttempts;
@@ -316,19 +332,50 @@ async function processOne() {
       });
     }
     console.error(`${workerId} failed job=${job.id} type=${job.type}: ${message}`);
-    return true;
   }
 }
 
 async function main() {
-  console.log(`${workerId} started`);
-  while (true) {
-    const worked = await processOne();
-    if (!worked) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+  const concurrency = env.workerConcurrency;
+  console.log(`${workerId} started (concurrency=${concurrency})`);
+  await reclaimStaleJobs();
+
+  const inFlight = new Set<Promise<void>>();
+  while (!shuttingDown) {
+    // 填满并发槽：原子领取直到无 job 可领或槽位已满。
+    while (!shuttingDown && inFlight.size < concurrency) {
+      const job = await claimNextJob(workerId);
+      if (!job) break;
+      const task = handleClaimedJob(job).finally(() => {
+        inFlight.delete(task);
+      });
+      inFlight.add(task);
+    }
+
+    if (inFlight.size === 0) {
+      // 空闲：顺带回收陈旧 active job，然后退避。
+      await reclaimStaleJobs();
+      await sleep(2000);
+    } else {
+      // 等任意一个完成，腾出槽位继续领取。
+      await Promise.race(inFlight);
     }
   }
+
+  // 优雅停机：不再领新 job，等在途 job 跑完再断开连接。
+  console.log(`${workerId} shutting down, draining ${inFlight.size} in-flight job(s)...`);
+  await Promise.allSettled(inFlight);
+  await prisma.$disconnect();
+  console.log(`${workerId} stopped`);
 }
+
+function requestShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${workerId} received ${signal}, will stop after in-flight jobs finish`);
+}
+process.on("SIGTERM", () => requestShutdown("SIGTERM"));
+process.on("SIGINT", () => requestShutdown("SIGINT"));
 
 main().catch((error) => {
   console.error(error);
