@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { enqueueRecognitionJob } from "@/lib/queue/jobs";
+import { enforceRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const limited = enforceRateLimit(request, "retry", 30, 60_000);
+  if (limited) return limited;
+
   const { id } = await params;
   const document = await prisma.document.findUnique({ where: { id } });
   if (!document) {

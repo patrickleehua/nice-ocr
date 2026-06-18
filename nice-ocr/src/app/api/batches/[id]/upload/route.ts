@@ -3,12 +3,16 @@ import { enqueueRecognitionJob } from "@/lib/queue/jobs";
 import { prisma } from "@/lib/db/client";
 import { storeOriginal } from "@/lib/files/storage";
 import { ingestUpload } from "@/lib/files/ingest";
+import { enforceRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 // PDF 逐页渲染较耗时，放宽函数执行时长上限。
 export const maxDuration = 300;
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const limited = enforceRateLimit(request, "upload", 20, 60_000);
+  if (limited) return limited;
+
   const { id: batchId } = await params;
   const formData = await request.formData();
   const files = formData.getAll("files").filter((item): item is File => item instanceof File);

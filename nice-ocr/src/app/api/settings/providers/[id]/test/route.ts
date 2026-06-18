@@ -5,11 +5,16 @@ import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
+import { decryptSecret } from "@/lib/crypto/secret";
+import { enforceRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
 const pingSchema = z.object({ ok: z.boolean() });
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const limited = enforceRateLimit(request, "provider-test", 10, 60_000);
+  if (limited) return limited;
+
   const { id } = await params;
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!provider) {
@@ -33,10 +38,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Provider model is disabled" }, { status: 400 });
   }
 
+  const apiKey = decryptSecret(provider.apiKey);
   const started = Date.now();
   try {
     if (provider.protocol === "openai_responses") {
-      const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseUrl || undefined });
+      const client = new OpenAI({ apiKey, baseURL: provider.baseUrl || undefined });
       const response = await client.responses.parse({
         model: model.modelId,
         input: "Return {\"ok\":true}.",
@@ -45,7 +51,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       });
       pingSchema.parse(response.output_parsed);
     } else if (provider.protocol === "anthropic_messages") {
-      const client = new Anthropic({ apiKey: provider.apiKey, baseURL: provider.baseUrl || undefined });
+      const client = new Anthropic({ apiKey, baseURL: provider.baseUrl || undefined });
       const response = await client.messages.parse({
         model: model.modelId,
         max_tokens: 64,
