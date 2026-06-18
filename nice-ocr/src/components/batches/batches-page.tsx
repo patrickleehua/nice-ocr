@@ -9,7 +9,7 @@ import { ApprovalModeBadge, BatchStatusBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
 import { formatDateTime, formatNumber } from "@/lib/utils";
-import { CreateBatchDrawer } from "@/components/dialogs/action-dialogs";
+import { CreateBatchDrawer, type BatchModelOptionProvider, type CreateBatchPayload } from "@/components/dialogs/action-dialogs";
 import { apiGet, apiJson, apiUpload } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { BatchStatus } from "@/lib/types";
@@ -22,6 +22,11 @@ interface ApiBatch {
   approvalMode: string;
   createdAt: string;
   _count?: { documents: number; rows: number };
+}
+
+interface SettingsForBatchCreate {
+  defaults: { approvalMode: string };
+  providers: BatchModelOptionProvider[];
 }
 
 export function BatchesPage() {
@@ -46,13 +51,13 @@ export function BatchesPage() {
     queryKey: ["batches", queryString],
     queryFn: () => apiGet(`${apiPaths.batches}?${queryString}`),
   });
-  const { data: settings } = useQuery<{ defaults: { approvalMode: string } }>({
+  const { data: settings } = useQuery<SettingsForBatchCreate>({
     queryKey: ["settings"],
     queryFn: () => apiGet(apiPaths.settings),
   });
 
   const createBatch = useMutation({
-    mutationFn: (payload: { name: string; strategy: string; notes: string; approvalMode: string }) =>
+    mutationFn: (payload: CreateBatchPayload) =>
       apiJson(apiPaths.batches, { method: "POST", body: JSON.stringify(payload) }),
     onSuccess: () => {
       setCreateOpen(false);
@@ -210,6 +215,7 @@ export function BatchesPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultApprovalMode={settings?.defaults.approvalMode ?? "hybrid"}
+        providers={settings?.providers ?? []}
         onSubmit={(payload) => createBatch.mutate(payload)}
       />
     </div>

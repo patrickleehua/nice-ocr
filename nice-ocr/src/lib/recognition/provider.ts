@@ -6,7 +6,8 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { extractionResultSchema, normalizeExtraction } from "@/lib/recognition/schema";
 import {
   defaultRecognitionPrompts,
-  getActiveAiProviderConfig,
+  getActiveRecognitionTarget,
+  type RecognitionTarget,
   type ProviderProtocol,
 } from "@/lib/recognition/settings";
 
@@ -57,21 +58,21 @@ export interface RecognitionProvider {
 }
 
 export async function createConfiguredRecognitionProvider() {
-  const config = await getActiveAiProviderConfig();
-  return createRecognitionProvider(config, resolveProviderPrompts(config));
+  const target = await getActiveRecognitionTarget();
+  return createRecognitionProvider(target, resolveProviderPrompts(target.provider));
 }
 
 export function createRecognitionProvider(
-  config: AiProviderConfig,
-  prompts: ProviderPrompts = resolveProviderPrompts(config),
+  target: RecognitionTarget,
+  prompts: ProviderPrompts = resolveProviderPrompts(target.provider),
 ): RecognitionProvider {
-  if (config.protocol === "openai_responses") {
-    return new OpenAIResponsesProvider(config, prompts);
+  if (target.provider.protocol === "openai_responses") {
+    return new OpenAIResponsesProvider(target, prompts);
   }
-  if (config.protocol === "anthropic_messages") {
-    return new AnthropicMessagesProvider(config, prompts);
+  if (target.provider.protocol === "anthropic_messages") {
+    return new AnthropicMessagesProvider(target, prompts);
   }
-  throw new Error(`Unsupported AI provider protocol: ${config.protocol}`);
+  throw new Error(`Unsupported AI provider protocol: ${target.provider.protocol}`);
 }
 
 class OpenAIResponsesProvider implements RecognitionProvider {
@@ -82,12 +83,13 @@ class OpenAIResponsesProvider implements RecognitionProvider {
   private config: AiProviderConfig;
   private prompts: ProviderPrompts;
 
-  constructor(config: AiProviderConfig, prompts: ProviderPrompts) {
+  constructor(target: RecognitionTarget, prompts: ProviderPrompts) {
+    const config = target.provider;
     assertApiKey(config);
     this.config = config;
     this.prompts = prompts;
     this.key = config.providerKey;
-    this.model = config.model;
+    this.model = target.model.modelId;
     this.client = new OpenAI({
       apiKey: config.apiKey ?? "",
       baseURL: config.baseUrl || undefined,
@@ -96,7 +98,7 @@ class OpenAIResponsesProvider implements RecognitionProvider {
 
   async recognize(input: RecognitionInput): Promise<RecognitionProviderResult> {
     const response = await this.client.responses.parse({
-      model: this.config.model,
+      model: this.model,
       input: [
         {
           role: "user",
@@ -138,12 +140,13 @@ class AnthropicMessagesProvider implements RecognitionProvider {
   private config: AiProviderConfig;
   private prompts: ProviderPrompts;
 
-  constructor(config: AiProviderConfig, prompts: ProviderPrompts) {
+  constructor(target: RecognitionTarget, prompts: ProviderPrompts) {
+    const config = target.provider;
     assertApiKey(config);
     this.config = config;
     this.prompts = prompts;
     this.key = config.providerKey;
-    this.model = config.model;
+    this.model = target.model.modelId;
     this.client = new Anthropic({
       apiKey: config.apiKey ?? "",
       baseURL: config.baseUrl || undefined,
@@ -152,7 +155,7 @@ class AnthropicMessagesProvider implements RecognitionProvider {
 
   async recognize(input: RecognitionInput): Promise<RecognitionProviderResult> {
     const response = await this.client.messages.parse({
-      model: this.config.model,
+      model: this.model,
       max_tokens: this.config.maxOutputTokens,
       ...(this.config.temperature == null ? {} : { temperature: this.config.temperature }),
       system: this.prompts.systemPrompt,

@@ -9,7 +9,7 @@ import { prisma } from "@/lib/db/client";
 export const runtime = "nodejs";
 
 const pingSchema = z.object({ ok: z.boolean() });
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!provider) {
@@ -18,13 +18,27 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
   if (!provider.apiKey?.trim()) {
     return NextResponse.json({ error: "Provider API key is empty" }, { status: 400 });
   }
+  const body = await request.json().catch(() => ({}));
+  const modelId = String(body.modelId ?? "").trim();
+  if (!modelId) {
+    return NextResponse.json({ error: "modelId is required" }, { status: 400 });
+  }
+  const model = await prisma.aiProviderModel.findFirst({
+    where: { providerId: provider.id, modelId },
+  });
+  if (!model) {
+    return NextResponse.json({ error: "Provider model not found" }, { status: 404 });
+  }
+  if (!model.enabled) {
+    return NextResponse.json({ error: "Provider model is disabled" }, { status: 400 });
+  }
 
   const started = Date.now();
   try {
     if (provider.protocol === "openai_responses") {
       const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseUrl || undefined });
       const response = await client.responses.parse({
-        model: provider.model,
+        model: model.modelId,
         input: "Return {\"ok\":true}.",
         max_output_tokens: 64,
         text: { format: zodTextFormat(pingSchema, "settings_ping") },
@@ -33,7 +47,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     } else if (provider.protocol === "anthropic_messages") {
       const client = new Anthropic({ apiKey: provider.apiKey, baseURL: provider.baseUrl || undefined });
       const response = await client.messages.parse({
-        model: provider.model,
+        model: model.modelId,
         max_tokens: 64,
         messages: [{ role: "user", content: "Return {\"ok\":true}." }],
         output_config: {

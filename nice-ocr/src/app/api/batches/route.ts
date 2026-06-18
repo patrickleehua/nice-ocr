@@ -49,7 +49,9 @@ export async function POST(request: Request) {
       strategy: body.strategy ? String(body.strategy) : "balanced",
       approvalMode,
       primaryProviderKey: pickKey(body.primaryProviderKey, defaults.primaryProviderKey),
+      primaryModelId: pickKey(body.primaryModelId, defaults.primaryModelId),
       secondaryProviderKey: pickKey(body.secondaryProviderKey, defaults.secondaryProviderKey),
+      secondaryModelId: pickKey(body.secondaryModelId, defaults.secondaryModelId),
       status: "draft",
     },
   });

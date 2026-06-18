@@ -14,7 +14,9 @@ model Batch {
   strategy             String           @default("balanced")
   approvalMode         String           @default("hybrid")
   primaryProviderKey   String?
+  primaryModelId       String?
   secondaryProviderKey String?
+  secondaryModelId     String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
   documents            Document[]
@@ -29,7 +31,7 @@ model Batch {
 model Document {
   id              String              @id @default(cuid())
   batchId         String
-  batch           Batch               @relation(fields: [batchId], references: [id])
+  batch           Batch               @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   originalName    String
   storedPath      String
   thumbnailPath   String?
@@ -58,8 +60,8 @@ model RecognitionJob {
   id           String              @id @default(cuid())
   batchId      String
   documentId   String
-  batch        Batch               @relation(fields: [batchId], references: [id])
-  document     Document            @relation(fields: [documentId], references: [id])
+  batch        Batch               @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  document     Document            @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   type         String              @default("extract")
   status       String              @default("queued")
   priority     Int                 @default(100)
@@ -81,8 +83,8 @@ model ExtractionAttempt {
   id             String           @id @default(cuid())
   documentId     String
   jobId          String?
-  document       Document         @relation(fields: [documentId], references: [id])
-  job            RecognitionJob?  @relation(fields: [jobId], references: [id])
+  document       Document         @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  job            RecognitionJob?  @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   providerKey    String
   model          String
   promptVersion  String
@@ -109,9 +111,9 @@ model RecognitionRow {
   batchId             String
   documentId          String
   canonicalAttemptId  String?
-  batch               Batch                @relation(fields: [batchId], references: [id])
-  document            Document             @relation(fields: [documentId], references: [id])
-  canonicalAttempt    ExtractionAttempt?   @relation(fields: [canonicalAttemptId], references: [id])
+  batch               Batch                @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  document            Document             @relation(fields: [documentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  canonicalAttempt    ExtractionAttempt?   @relation(fields: [canonicalAttemptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   rowIndex            Int
   rawDate             String?
   normalizedMonth     String?
@@ -151,7 +153,7 @@ model ProductObservation {
   rowId           String
   batchId         String
   documentId      String
-  row             RecognitionRow @relation(fields: [rowId], references: [id])
+  row             RecognitionRow @relation(fields: [rowId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   rawCode         String?
   cleanCode       String?
   name            String
@@ -186,7 +188,7 @@ model Product {
 model ProductConflict {
   id               String    @id @default(cuid())
   productId        String?
-  product          Product?  @relation(fields: [productId], references: [id])
+  product          Product?  @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   type             String
   severity         String
   reason           String
@@ -227,7 +229,6 @@ model AiProviderConfig {
   protocol        String
   baseUrl         String?
   apiKey          String?
-  model           String
   enabled         Boolean  @default(false)
   priority        Int      @default(100)
   temperature     Float?
@@ -237,15 +238,34 @@ model AiProviderConfig {
   metadataJson    String   @default("{}")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  models          AiProviderModel[]
 
   @@index([enabled, priority])
   @@index([protocol])
 }
 
+model AiProviderModel {
+  id           String           @id @default(cuid())
+  providerId   String
+  provider     AiProviderConfig @relation(fields: [providerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  modelId      String
+  displayName  String           @default("")
+  enabled      Boolean          @default(true)
+  priority     Int              @default(100)
+  source       String           @default("manual")
+  metadataJson String           @default("{}")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([providerId, modelId])
+  @@index([providerId, enabled, priority])
+  @@index([source])
+}
+
 model ExportRecord {
   id         String   @id @default(cuid())
   batchId    String?
-  batch      Batch?   @relation(fields: [batchId], references: [id])
+  batch      Batch?   @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   type       String
   filterJson String
   filePath   String

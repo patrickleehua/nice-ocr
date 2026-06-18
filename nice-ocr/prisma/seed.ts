@@ -44,22 +44,26 @@ async function main() {
   await prisma.recognitionJob.deleteMany();
   await prisma.document.deleteMany();
   await prisma.batch.deleteMany();
+  await prisma.aiProviderModel.deleteMany();
   await prisma.aiProviderConfig.deleteMany();
   await prisma.appSetting.deleteMany();
 
-  await prisma.aiProviderConfig.createMany({
-    data: [
+  const providers = await Promise.all(
+    [
       {
         providerKey: "openai-responses-default",
         displayName: "OpenAI Responses",
         protocol: "openai_responses",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "",
-        model: "gpt-4.1",
         enabled: false,
         priority: 10,
         maxOutputTokens: 2000,
         metadataJson: JSON.stringify({ notes: "在设置页填入 API Key 后启用" }),
+        models: [
+          { modelId: "gpt-4.1", displayName: "GPT-4.1", priority: 10 },
+          { modelId: "gpt-4.1-mini", displayName: "GPT-4.1 mini", priority: 20 },
+        ],
       },
       {
         providerKey: "anthropic-default",
@@ -67,14 +71,30 @@ async function main() {
         protocol: "anthropic_messages",
         baseUrl: "https://api.anthropic.com",
         apiKey: "",
-        model: "claude-opus-4-6",
         enabled: false,
         priority: 20,
         maxOutputTokens: 2000,
         metadataJson: JSON.stringify({ notes: "在设置页填入 API Key 后启用" }),
+        models: [
+          { modelId: "claude-opus-4-6", displayName: "Claude Opus 4.6", priority: 10 },
+        ],
       },
-    ],
-  });
+    ].map(({ models, ...provider }) =>
+      prisma.aiProviderConfig.create({
+        data: {
+          ...provider,
+          models: {
+            create: models.map((model) => ({
+              ...model,
+              enabled: true,
+              source: "manual",
+              metadataJson: "{}",
+            })),
+          },
+        },
+      }),
+    ),
+  );
 
   await prisma.appSetting.create({
     data: {
@@ -85,6 +105,10 @@ async function main() {
         queueConcurrency: 3,
         maxAttempts: 3,
         backoffSeconds: 30,
+        primaryProviderKey: providers[0].providerKey,
+        primaryModelId: "gpt-4.1",
+        secondaryProviderKey: providers[0].providerKey,
+        secondaryModelId: "gpt-4.1-mini",
       }),
     },
   });

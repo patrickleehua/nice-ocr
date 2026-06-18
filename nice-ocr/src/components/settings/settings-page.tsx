@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Save, Settings2, TestTube2 } from "lucide-react";
+import { Download, Plus, Save, Settings2, TestTube2, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiGet, apiJson } from "@/lib/api/client";
@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 
 type Protocol = "openai_responses" | "anthropic_messages";
 type Strategy = "fast" | "balanced" | "consensus" | "manual";
-
 type ApprovalMode = "manual" | "hybrid" | "auto";
+type ModelSource = "manual" | "imported";
 
 interface SettingsPayload {
   defaults: {
@@ -23,13 +23,27 @@ interface SettingsPayload {
     maxAttempts: number;
     backoffSeconds: number;
     primaryProviderKey: string | null;
+    primaryModelId: string | null;
     secondaryProviderKey: string | null;
+    secondaryModelId: string | null;
     systemPrompt: string;
     userPrompt: string;
     auditSampleRate: number;
     auditProviderKey: string | null;
+    auditModelId: string | null;
   };
   providers: ProviderForm[];
+}
+
+interface ProviderModelForm {
+  id?: string;
+  providerId?: string;
+  modelId: string;
+  displayName: string;
+  enabled: boolean;
+  priority: number;
+  source: ModelSource;
+  metadataJson: string;
 }
 
 interface ProviderForm {
@@ -38,7 +52,6 @@ interface ProviderForm {
   displayName: string;
   protocol: Protocol;
   baseUrl: string;
-  model: string;
   enabled: boolean;
   priority: number;
   temperature: number | null;
@@ -48,7 +61,13 @@ interface ProviderForm {
   metadataJson: string;
   hasApiKey?: boolean;
   apiKey?: string;
+  models: ProviderModelForm[];
 }
+
+type SelectionPatch = {
+  providerKey: string | null;
+  modelId: string | null;
+};
 
 const protocolOptions: Array<{ value: Protocol; label: string }> = [
   { value: "openai_responses", label: "OpenAI Responses" },
@@ -60,7 +79,6 @@ const defaultProvider: ProviderForm = {
   displayName: "自定义 Provider",
   protocol: "openai_responses",
   baseUrl: "https://api.openai.com/v1",
-  model: "gpt-4.1",
   enabled: false,
   priority: 100,
   temperature: null,
@@ -68,6 +86,16 @@ const defaultProvider: ProviderForm = {
   systemPrompt: null,
   userPrompt: null,
   metadataJson: "{}",
+  models: [
+    {
+      modelId: "gpt-4.1",
+      displayName: "GPT-4.1",
+      enabled: true,
+      priority: 100,
+      source: "manual",
+      metadataJson: "{}",
+    },
+  ],
 };
 
 export function SettingsPage() {
@@ -78,18 +106,23 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<SettingsPayload | null>(null);
   const [syncedFrom, setSyncedFrom] = useState<SettingsPayload | null>(null);
   const [testState, setTestState] = useState<Record<string, string>>({});
+  const [importState, setImportState] = useState<Record<string, string>>({});
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   // 渲染期同步：拉到新设置时初始化可编辑副本，避免在 effect 内 setState 触发级联渲染。
   if (data && data !== syncedFrom) {
     setSyncedFrom(data);
     setDraft({
-      defaults: data.defaults,
-      providers: data.providers.map((provider) => ({ ...provider, apiKey: "" })),
+      defaults: normalizeDefaults(data.defaults),
+      providers: data.providers.map((provider) => ({ ...provider, apiKey: "", models: provider.models ?? [] })),
     });
   }
 
   const enabledCount = useMemo(() => draft?.providers.filter((provider) => provider.enabled).length ?? 0, [draft]);
+  const enabledModelCount = useMemo(
+    () => draft?.providers.reduce((sum, provider) => sum + provider.models.filter((model) => model.enabled).length, 0) ?? 0,
+    [draft],
+  );
 
   const saveMutation = useMutation({
     mutationFn: (payload: SettingsPayload) =>
@@ -100,6 +133,7 @@ export function SettingsPage() {
           providers: payload.providers.map((provider) => ({
             ...provider,
             apiKey: provider.apiKey?.trim() ? provider.apiKey : undefined,
+            models: provider.models.filter((model) => model.modelId.trim()),
           })),
         }),
       }),
@@ -121,7 +155,8 @@ export function SettingsPage() {
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={enabledCount > 0 ? "success" : "danger"}>{enabledCount} 个启用</Badge>
-          <Button size="sm" variant="primary" onClick={() => saveMutation.mutate(draft)}>
+          <Badge tone={enabledModelCount > 0 ? "success" : "danger"}>{enabledModelCount} 个模型</Badge>
+          <Button size="sm" variant="primary" onClick={() => saveMutation.mutate(draft)} disabled={saveMutation.isPending}>
             <Save size={15} />保存设置
           </Button>
         </div>
@@ -166,20 +201,22 @@ export function SettingsPage() {
             <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3">
               <div className="text-sm font-medium">双模型交叉验证（新建批次继承）</div>
               <p className="text-xs text-muted-foreground">
-                两次识别分别用主、副模型，两次一致才允许 AI 自动通过。副模型留空则自动选另一个启用的 provider，无其他可用时退化为主模型双跑。
+                两次识别分别用主、副模型，两次一致才允许 AI 自动通过。副模型留空则自动选另一个启用模型，无其他可用时退化为主模型双跑。
               </p>
               <div className="grid gap-4 md:grid-cols-2">
-                <ProviderSelect
+                <ProviderModelSelect
                   label="主模型（pass1）"
-                  value={draft.defaults.primaryProviderKey}
+                  providerKey={draft.defaults.primaryProviderKey}
+                  modelId={draft.defaults.primaryModelId}
                   providers={draft.providers}
-                  onChange={(value) => updateDefaults("primaryProviderKey", value)}
+                  onChange={(value) => updateSelectionDefaults("primary", value)}
                 />
-                <ProviderSelect
+                <ProviderModelSelect
                   label="副模型（pass2）"
-                  value={draft.defaults.secondaryProviderKey}
+                  providerKey={draft.defaults.secondaryProviderKey}
+                  modelId={draft.defaults.secondaryModelId}
                   providers={draft.providers}
-                  onChange={(value) => updateDefaults("secondaryProviderKey", value)}
+                  onChange={(value) => updateSelectionDefaults("secondary", value)}
                 />
               </div>
             </div>
@@ -190,11 +227,12 @@ export function SettingsPage() {
                 对「机器自动通过」的行做规则/统计预筛 + 第三次独立 AI 交叉验证，存疑行进复审队列交人工。手动在批次/审核台点「运行审核」触发。
               </p>
               <div className="grid gap-4 md:grid-cols-2">
-                <ProviderSelect
+                <ProviderModelSelect
                   label="审核模型（第三次复核）"
-                  value={draft.defaults.auditProviderKey}
+                  providerKey={draft.defaults.auditProviderKey}
+                  modelId={draft.defaults.auditModelId}
                   providers={draft.providers}
-                  onChange={(value) => updateDefaults("auditProviderKey", value)}
+                  onChange={(value) => updateSelectionDefaults("audit", value)}
                 />
                 <NumberField
                   label="干净行抽样率（0~1）"
@@ -209,9 +247,9 @@ export function SettingsPage() {
         <Panel>
           <PanelHeader>
             <div className="flex items-center justify-between gap-3">
-              <PanelTitle>AI 模型 / Provider</PanelTitle>
+              <PanelTitle>AI Provider / 模型</PanelTitle>
               <Button size="sm" variant="secondary" onClick={addProvider}>
-                <Plus size={15} />新增模型
+                <Plus size={15} />新增 Provider
               </Button>
             </div>
           </PanelHeader>
@@ -221,11 +259,12 @@ export function SettingsPage() {
                 {draft.providers.map((provider, index) => {
                   const cardKey = provider.id ?? provider.providerKey;
                   const expanded = expandedKey === cardKey;
+                  const enabledModels = provider.models.filter((model) => model.enabled);
                   return (
                     <div
                       key={cardKey}
                       className={cn(
-                        "flex flex-col gap-3 rounded-lg border bg-surface p-4 transition-colors",
+                        "flex flex-col gap-3 rounded-md border bg-surface p-4 transition-colors",
                         provider.enabled ? "border-border" : "border-dashed border-border",
                         expanded && "ring-1 ring-primary/40 sm:col-span-2 xl:col-span-3",
                       )}
@@ -251,11 +290,12 @@ export function SettingsPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <div className="truncate text-xs text-muted-foreground" title={provider.model}>
-                          {provider.model || "未填写模型"}
+                        <div className="truncate text-xs text-muted-foreground" title={enabledModels.map((model) => model.modelId).join(", ")}>
+                          {enabledModels.length ? enabledModels.map((model) => model.modelId).join(" / ") : "没有启用模型"}
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           <Badge>{protocolLabel(provider.protocol)}</Badge>
+                          <Badge>{provider.models.length} models</Badge>
                           {provider.hasApiKey ? <Badge tone="success">已配密钥</Badge> : <Badge tone="danger">无密钥</Badge>}
                         </div>
                       </div>
@@ -268,16 +308,18 @@ export function SettingsPage() {
                         >
                           <Settings2 size={14} />{expanded ? "收起" : "配置"}
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => testProvider(provider)}>
-                          <TestTube2 size={14} />测试
-                        </Button>
-                        {testState[cardKey] ? (
-                          <span className="truncate text-xs text-muted-foreground">{testState[cardKey]}</span>
+                        {provider.protocol === "openai_responses" ? (
+                          <Button size="sm" variant="ghost" onClick={() => importModels(provider)}>
+                            <Download size={14} />导入
+                          </Button>
+                        ) : null}
+                        {importState[cardKey] ? (
+                          <span className="truncate text-xs text-muted-foreground">{importState[cardKey]}</span>
                         ) : null}
                       </div>
 
                       {expanded ? (
-                        <div className="space-y-3 border-t border-border pt-3">
+                        <div className="space-y-4 border-t border-border pt-3">
                           <div className="grid gap-3 md:grid-cols-2">
                             <TextField label="Provider Key" value={provider.providerKey} onChange={(value) => updateProvider(index, { providerKey: value })} />
                             <TextField label="显示名称" value={provider.displayName} onChange={(value) => updateProvider(index, { displayName: value })} />
@@ -294,11 +336,53 @@ export function SettingsPage() {
                               </select>
                             </label>
                             <TextField label="Base URL" value={provider.baseUrl} onChange={(value) => updateProvider(index, { baseUrl: value })} />
-                            <TextField label="模型" value={provider.model} onChange={(value) => updateProvider(index, { model: value })} />
                             <TextField label="API Key" type="password" value={provider.apiKey ?? ""} placeholder={provider.hasApiKey ? "留空则保留当前密钥" : "输入 API Key"} onChange={(value) => updateProvider(index, { apiKey: value })} />
                             <NumberField label="优先级" value={provider.priority} onChange={(value) => updateProvider(index, { priority: value })} />
                             <NumberField label="最大输出 Tokens" value={provider.maxOutputTokens} onChange={(value) => updateProvider(index, { maxOutputTokens: value })} />
                           </div>
+
+                          <div className="space-y-2 rounded-md border border-border bg-background p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-medium">模型选项</div>
+                              <Button size="sm" variant="secondary" onClick={() => addModel(index)}>
+                                <Plus size={14} />新增模型
+                              </Button>
+                            </div>
+                            <div className="space-y-2">
+                              {provider.models.map((model, modelIndex) => (
+                                <div key={model.id ?? `${model.modelId}-${modelIndex}`} className="grid gap-2 rounded-md border border-border bg-surface p-2 md:grid-cols-[1.2fr_1fr_88px_96px_auto]">
+                                  <TextField label="Model ID" value={model.modelId} onChange={(value) => updateModel(index, modelIndex, { modelId: value })} />
+                                  <TextField label="显示名" value={model.displayName} onChange={(value) => updateModel(index, modelIndex, { displayName: value })} />
+                                  <NumberField label="优先级" value={model.priority} onChange={(value) => updateModel(index, modelIndex, { priority: value })} />
+                                  <label className="flex items-end gap-2 pb-2 text-sm text-muted-foreground">
+                                    <input
+                                      type="checkbox"
+                                      checked={model.enabled}
+                                      onChange={(event) => updateModel(index, modelIndex, { enabled: event.target.checked })}
+                                    />
+                                    启用
+                                  </label>
+                                  <div className="flex items-end gap-1">
+                                    <Button size="icon" variant="ghost" aria-label="测试模型" onClick={() => testProviderModel(provider, model)}>
+                                      <TestTube2 size={14} />
+                                    </Button>
+                                    {!model.id ? (
+                                      <Button size="icon" variant="ghost" aria-label="删除未保存模型" onClick={() => removeModel(index, modelIndex)}>
+                                        <Trash2 size={14} />
+                                      </Button>
+                                    ) : null}
+                                  </div>
+                                  <div className="md:col-span-5">
+                                    <span className="text-xs text-muted-foreground">
+                                      {model.source === "imported" ? "导入" : "手动"}
+                                      {testState[testKey(provider, model)] ? ` · ${testState[testKey(provider, model)]}` : ""}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
                           <TextAreaField
                             label="系统提示词覆盖"
                             value={provider.systemPrompt ?? ""}
@@ -318,8 +402,8 @@ export function SettingsPage() {
                 })}
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-                还没有配置模型，点右上角「新增模型」添加。
+              <div className="rounded-md border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+                还没有配置 provider，点右上角「新增 Provider」添加。
               </div>
             )}
           </div>
@@ -353,11 +437,37 @@ export function SettingsPage() {
     setDraft((current) => current ? { ...current, defaults: { ...current.defaults, [key]: value } } : current);
   }
 
+  function updateSelectionDefaults(slot: "primary" | "secondary" | "audit", value: SelectionPatch) {
+    setDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        defaults: {
+          ...current.defaults,
+          [`${slot}ProviderKey`]: value.providerKey,
+          [`${slot}ModelId`]: value.modelId,
+        },
+      };
+    });
+  }
+
   function updateProvider(index: number, patch: Partial<ProviderForm>) {
     setDraft((current) => {
       if (!current) return current;
       const providers = current.providers.slice();
       providers[index] = { ...providers[index], ...patch };
+      return { ...current, providers };
+    });
+  }
+
+  function updateModel(providerIndex: number, modelIndex: number, patch: Partial<ProviderModelForm>) {
+    setDraft((current) => {
+      if (!current) return current;
+      const providers = current.providers.slice();
+      const provider = providers[providerIndex];
+      const models = provider.models.slice();
+      models[modelIndex] = { ...models[modelIndex], ...patch };
+      providers[providerIndex] = { ...provider, models };
       return { ...current, providers };
     });
   }
@@ -369,17 +479,84 @@ export function SettingsPage() {
     setExpandedKey(newKey);
   }
 
-  async function testProvider(provider: ProviderForm) {
-    if (!provider.id) {
-      setTestState((current) => ({ ...current, [provider.providerKey]: "请先保存后测试" }));
+  function addModel(providerIndex: number) {
+    setDraft((current) => {
+      if (!current) return current;
+      const providers = current.providers.slice();
+      const provider = providers[providerIndex];
+      providers[providerIndex] = {
+        ...provider,
+        models: [
+          ...provider.models,
+          {
+            modelId: "",
+            displayName: "",
+            enabled: true,
+            priority: 100,
+            source: "manual",
+            metadataJson: "{}",
+          },
+        ],
+      };
+      return { ...current, providers };
+    });
+  }
+
+  function removeModel(providerIndex: number, modelIndex: number) {
+    setDraft((current) => {
+      if (!current) return current;
+      const providers = current.providers.slice();
+      const provider = providers[providerIndex];
+      providers[providerIndex] = {
+        ...provider,
+        models: provider.models.filter((_, index) => index !== modelIndex),
+      };
+      return { ...current, providers };
+    });
+  }
+
+  async function testProviderModel(provider: ProviderForm, model: ProviderModelForm) {
+    const key = testKey(provider, model);
+    if (!provider.id || !model.modelId.trim()) {
+      setTestState((current) => ({ ...current, [key]: "请先保存 provider 并填写模型" }));
       return;
     }
-    setTestState((current) => ({ ...current, [provider.id!]: "测试中..." }));
+    setTestState((current) => ({ ...current, [key]: "测试中..." }));
     try {
-      const result = await apiJson<{ ok: boolean; latencyMs: number }>(`/api/settings/providers/${provider.id}/test`, { method: "POST" });
-      setTestState((current) => ({ ...current, [provider.id!]: `连接正常 ${result.latencyMs}ms` }));
+      const result = await apiJson<{ ok: boolean; latencyMs: number }>(`/api/settings/providers/${provider.id}/test`, {
+        method: "POST",
+        body: JSON.stringify({ modelId: model.modelId }),
+      });
+      setTestState((current) => ({ ...current, [key]: `连接正常 ${result.latencyMs}ms` }));
     } catch (error) {
-      setTestState((current) => ({ ...current, [provider.id!]: error instanceof Error ? error.message : String(error) }));
+      setTestState((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+
+  async function importModels(provider: ProviderForm) {
+    const key = provider.id ?? provider.providerKey;
+    if (!provider.id) {
+      setImportState((current) => ({ ...current, [key]: "请先保存后导入" }));
+      return;
+    }
+    setImportState((current) => ({ ...current, [key]: "导入中..." }));
+    try {
+      const result = await apiJson<{ imported: number; created: number; updated: number; models: ProviderModelForm[] }>(
+        `/api/settings/providers/${provider.id}/models/import`,
+        { method: "POST", body: "{}" },
+      );
+      setDraft((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          providers: current.providers.map((item) =>
+            item.id === provider.id ? { ...item, models: result.models } : item,
+          ),
+        };
+      });
+      setImportState((current) => ({ ...current, [key]: `导入 ${result.imported} 个，新增 ${result.created} 个` }));
+    } catch (error) {
+      setImportState((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }));
     }
   }
 }
@@ -435,32 +612,37 @@ function TextAreaField({
   );
 }
 
-function ProviderSelect({
+function ProviderModelSelect({
   label,
-  value,
+  providerKey,
+  modelId,
   providers,
   onChange,
 }: {
   label: string;
-  value: string | null;
+  providerKey: string | null;
+  modelId: string | null;
   providers: ProviderForm[];
-  onChange: (value: string | null) => void;
+  onChange: (value: SelectionPatch) => void;
 }) {
+  const value = providerKey && modelId ? `${providerKey}::${modelId}` : "";
   return (
     <label className="block text-sm">
       <span className="mb-1 block text-muted-foreground">{label}</span>
       <select
         className="h-9 w-full rounded-md border border-border bg-surface px-3"
-        value={value ?? ""}
-        onChange={(event) => onChange(event.target.value || null)}
+        value={value}
+        onChange={(event) => onChange(parseSelection(event.target.value))}
       >
         <option value="">自动（按优先级）</option>
-        {providers.map((provider) => (
-          <option key={provider.id ?? provider.providerKey} value={provider.providerKey}>
-            {(provider.displayName || provider.providerKey)} · {provider.model}
-            {provider.enabled ? "" : "（未启用）"}
-          </option>
-        ))}
+        {providers.flatMap((provider) =>
+          provider.models.map((model) => (
+            <option key={`${provider.providerKey}::${model.modelId}`} value={`${provider.providerKey}::${model.modelId}`}>
+              {(provider.displayName || provider.providerKey)} · {model.displayName || model.modelId}
+              {provider.enabled && model.enabled ? "" : "（未启用）"}
+            </option>
+          )),
+        )}
       </select>
     </label>
   );
@@ -486,7 +668,52 @@ function protocolLabel(protocol: Protocol): string {
 
 function defaultProtocolPatch(protocol: Protocol): Partial<ProviderForm> {
   if (protocol === "anthropic_messages") {
-    return { protocol, baseUrl: "https://api.anthropic.com", model: "claude-opus-4-6" };
+    return {
+      protocol,
+      baseUrl: "https://api.anthropic.com",
+      models: [
+        {
+          modelId: "claude-opus-4-6",
+          displayName: "Claude Opus 4.6",
+          enabled: true,
+          priority: 100,
+          source: "manual",
+          metadataJson: "{}",
+        },
+      ],
+    };
   }
-  return { protocol, baseUrl: "https://api.openai.com/v1", model: "gpt-4.1" };
+  return {
+    protocol,
+    baseUrl: "https://api.openai.com/v1",
+    models: [
+      {
+        modelId: "gpt-4.1",
+        displayName: "GPT-4.1",
+        enabled: true,
+        priority: 100,
+        source: "manual",
+        metadataJson: "{}",
+      },
+    ],
+  };
+}
+
+function parseSelection(value: string): SelectionPatch {
+  const [providerKey, ...modelParts] = value.split("::");
+  const modelId = modelParts.join("::");
+  return providerKey && modelId ? { providerKey, modelId } : { providerKey: null, modelId: null };
+}
+
+function testKey(provider: ProviderForm, model: ProviderModelForm) {
+  return `${provider.id ?? provider.providerKey}::${model.id ?? model.modelId}`;
+}
+
+function normalizeDefaults(defaults: SettingsPayload["defaults"]): SettingsPayload["defaults"] {
+  return {
+    ...defaults,
+    primaryModelId: defaults.primaryModelId ?? null,
+    secondaryModelId: defaults.secondaryModelId ?? null,
+    auditModelId: defaults.auditModelId ?? null,
+  };
 }

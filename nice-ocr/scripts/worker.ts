@@ -10,7 +10,7 @@ import {
   type RecognitionProvider,
   type RecognitionProviderResult,
 } from "@/lib/recognition/provider";
-import { resolveRecognitionProviders } from "@/lib/recognition/settings";
+import { resolveAuditRecognitionTarget, resolveRecognitionProviders } from "@/lib/recognition/settings";
 import { claimNextJob } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
 import {
@@ -77,7 +77,7 @@ async function extractDocument(job: ClaimedJob) {
 
   // 双模型交叉验证：pass1 主模型、pass2 副模型（提示词按 provider 覆盖，回退全局默认）。
   const { primary, secondary, defaults } = await resolveRecognitionProviders(job.batch);
-  const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary, defaults));
+  const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary.provider, defaults));
 
   // 第一次识别（canonical 结果，主模型）。
   const first = await recognizePass(primaryProvider, job, imageBase64, 1);
@@ -87,9 +87,9 @@ async function extractDocument(job: ClaimedJob) {
   let consensusFlags = canonicalRows.map(() => false);
   if (requiresConsensus(mode)) {
     const secondaryProvider =
-      secondary.id === primary.id
+      secondary.provider.id === primary.provider.id && secondary.model.id === primary.model.id
         ? primaryProvider
-        : createRecognitionProvider(secondary, resolveProviderPrompts(secondary, defaults));
+        : createRecognitionProvider(secondary, resolveProviderPrompts(secondary.provider, defaults));
     const second = await recognizePass(secondaryProvider, job, imageBase64, 2);
     consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows);
   }
@@ -140,7 +140,7 @@ async function extractDocument(job: ClaimedJob) {
   });
 
   console.log(
-    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.providerKey} secondary=${secondary.providerKey} rows=${canonicalRows.length} auto=${autoApproved}`,
+    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved}`,
   );
 }
 
@@ -199,10 +199,10 @@ async function auditDocument(job: ClaimedJob) {
   const suggestionByRow = new Map<string, AuditableRow>();
   if (runStage2) {
     try {
-      const auditProvider = await resolveAuditProvider(primary, secondary, defaults.auditProviderKey);
+      const auditProvider = await resolveAuditProvider(primary, secondary, defaults.auditProviderKey, defaults.auditModelId);
       const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
       const pass = await recognizePass(
-        createRecognitionProvider(auditProvider, resolveProviderPrompts(auditProvider, defaults)),
+        createRecognitionProvider(auditProvider, resolveProviderPrompts(auditProvider.provider, defaults)),
         job,
         imageBase64,
         3,
@@ -270,13 +270,9 @@ async function resolveAuditProvider(
   primary: Awaited<ReturnType<typeof resolveRecognitionProviders>>["primary"],
   secondary: Awaited<ReturnType<typeof resolveRecognitionProviders>>["secondary"],
   auditProviderKey: string | null,
+  auditModelId: string | null,
 ) {
-  if (auditProviderKey) {
-    const config = await prisma.aiProviderConfig.findUnique({ where: { providerKey: auditProviderKey } });
-    if (config && config.enabled && config.apiKey?.trim()) return config;
-  }
-  // 默认优先选与主模型不同的 provider 以获得独立视角。
-  return secondary.id !== primary.id ? secondary : primary;
+  return resolveAuditRecognitionTarget(primary, secondary, auditProviderKey, auditModelId);
 }
 
 function normalize(name: string): string {

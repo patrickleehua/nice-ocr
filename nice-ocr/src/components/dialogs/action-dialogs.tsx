@@ -5,6 +5,28 @@ import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import type { RecognitionRow } from "@/lib/types";
 
+export interface BatchModelOptionProvider {
+  providerKey: string;
+  displayName: string;
+  enabled: boolean;
+  models: Array<{
+    modelId: string;
+    displayName: string;
+    enabled: boolean;
+  }>;
+}
+
+export interface CreateBatchPayload {
+  name: string;
+  strategy: string;
+  notes: string;
+  approvalMode: string;
+  primaryProviderKey: string | null;
+  primaryModelId: string | null;
+  secondaryProviderKey: string | null;
+  secondaryModelId: string | null;
+}
+
 export function DrawerShell({
   title,
   children,
@@ -37,11 +59,13 @@ export function CreateBatchDrawer({
   onClose,
   onSubmit,
   defaultApprovalMode = "hybrid",
+  providers = [],
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (payload: { name: string; strategy: string; notes: string; approvalMode: string }) => void;
+  onSubmit: (payload: CreateBatchPayload) => void;
   defaultApprovalMode?: string;
+  providers?: BatchModelOptionProvider[];
 }) {
   return (
     <DrawerShell title="创建批次" open={open} onClose={onClose}>
@@ -55,6 +79,8 @@ export function CreateBatchDrawer({
             strategy: String(form.get("strategy") ?? "balanced"),
             notes: String(form.get("notes") ?? ""),
             approvalMode: String(form.get("approvalMode") ?? "hybrid"),
+            ...parseProviderModelSelection(String(form.get("primaryTarget") ?? "")),
+            ...parseSecondaryProviderModelSelection(String(form.get("secondaryTarget") ?? "")),
           });
         }}
       >
@@ -80,6 +106,20 @@ export function CreateBatchDrawer({
           </select>
         </label>
         <label className="block text-sm">
+          <span className="mb-1 block text-muted-foreground">主模型（pass1）</span>
+          <select name="primaryTarget" className="h-9 w-full rounded-md border border-border bg-surface px-3">
+            <option value="">继承全局默认</option>
+            {renderModelOptions(providers)}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted-foreground">副模型（pass2）</span>
+          <select name="secondaryTarget" className="h-9 w-full rounded-md border border-border bg-surface px-3">
+            <option value="">继承全局默认</option>
+            {renderModelOptions(providers)}
+          </select>
+        </label>
+        <label className="block text-sm">
           <span className="mb-1 block text-muted-foreground">备注</span>
           <textarea name="notes" className="min-h-24 w-full rounded-md border border-border px-3 py-2" />
         </label>
@@ -90,6 +130,35 @@ export function CreateBatchDrawer({
       </form>
     </DrawerShell>
   );
+}
+
+function renderModelOptions(providers: BatchModelOptionProvider[]) {
+  return providers.flatMap((provider) =>
+    provider.models.map((model) => (
+      <option key={`${provider.providerKey}::${model.modelId}`} value={`${provider.providerKey}::${model.modelId}`}>
+        {(provider.displayName || provider.providerKey)} · {model.displayName || model.modelId}
+        {provider.enabled && model.enabled ? "" : "（未启用）"}
+      </option>
+    )),
+  );
+}
+
+function parseProviderModelSelection(value: string) {
+  const [providerKey, ...modelParts] = value.split("::");
+  const modelId = modelParts.join("::");
+  return {
+    primaryProviderKey: providerKey && modelId ? providerKey : null,
+    primaryModelId: providerKey && modelId ? modelId : null,
+  };
+}
+
+function parseSecondaryProviderModelSelection(value: string) {
+  const [providerKey, ...modelParts] = value.split("::");
+  const modelId = modelParts.join("::");
+  return {
+    secondaryProviderKey: providerKey && modelId ? providerKey : null,
+    secondaryModelId: providerKey && modelId ? modelId : null,
+  };
 }
 
 export function EditRowDrawer({

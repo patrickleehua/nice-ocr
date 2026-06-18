@@ -1,10 +1,12 @@
-import type { AiProviderConfig } from "@prisma/client";
+import type { AiProviderConfig, AiProviderModel } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { normalizeApprovalMode, type ApprovalMode } from "@/lib/recognition/review";
 
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
+export const providerModelSources = ["manual", "imported"] as const;
 
 export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
+export type ProviderModelSource = (typeof providerModelSources)[number];
 
 /** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
 export const defaultRecognitionPrompts = {
@@ -20,15 +22,31 @@ export interface RecognitionDefaults {
   queueConcurrency: number;
   maxAttempts: number;
   backoffSeconds: number;
-  /** 双模型交叉验证：pass1 主模型 / pass2 副模型（providerKey，空则按优先级回退）。 */
+  /** 双模型交叉验证：pass1 主 provider/model；空则按优先级回退。 */
   primaryProviderKey: string | null;
+  primaryModelId: string | null;
   secondaryProviderKey: string | null;
+  secondaryModelId: string | null;
   /** 全局默认识别提示词。 */
   systemPrompt: string;
   userPrompt: string;
-  /** 审核(二次复查)：抽样比例(0..1，对干净 ai_auto 行额外 AI 复核) 与审核 provider。 */
+  /** 审核(二次复查)：抽样比例(0..1，对干净 ai_auto 行额外 AI 复核) 与审核 provider/model。 */
   auditSampleRate: number;
   auditProviderKey: string | null;
+  auditModelId: string | null;
+}
+
+export interface SafeAiProviderModel {
+  id: string;
+  providerId: string;
+  modelId: string;
+  displayName: string;
+  enabled: boolean;
+  priority: number;
+  source: ProviderModelSource;
+  metadataJson: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SafeAiProviderConfig {
@@ -37,7 +55,6 @@ export interface SafeAiProviderConfig {
   displayName: string;
   protocol: ProviderProtocol;
   baseUrl: string;
-  model: string;
   enabled: boolean;
   priority: number;
   temperature: number | null;
@@ -48,6 +65,17 @@ export interface SafeAiProviderConfig {
   hasApiKey: boolean;
   createdAt: string;
   updatedAt: string;
+  models: SafeAiProviderModel[];
+}
+
+export interface AiProviderModelInput {
+  id?: string;
+  modelId?: string;
+  displayName?: string | null;
+  enabled?: boolean;
+  priority?: number;
+  source?: string;
+  metadataJson?: string;
 }
 
 export interface AiProviderConfigInput {
@@ -57,7 +85,6 @@ export interface AiProviderConfigInput {
   protocol?: string;
   baseUrl?: string | null;
   apiKey?: string | null;
-  model?: string;
   enabled?: boolean;
   priority?: number;
   temperature?: number | null;
@@ -65,11 +92,33 @@ export interface AiProviderConfigInput {
   systemPrompt?: string | null;
   userPrompt?: string | null;
   metadataJson?: string;
+  /** Legacy client compatibility: creates/updates a manual model row. */
+  model?: string;
+  models?: AiProviderModelInput[];
 }
 
 export interface RecognitionSettingsPayload {
   defaults: RecognitionDefaults;
   providers: SafeAiProviderConfig[];
+}
+
+export interface RecognitionTarget {
+  provider: AiProviderConfig;
+  model: AiProviderModel;
+}
+
+export interface RecognitionProviderPair {
+  primary: RecognitionTarget;
+  /** 副模型；未配置或与主相同时退化为 primary（即单模型双跑）。 */
+  secondary: RecognitionTarget;
+  defaults: RecognitionDefaults;
+}
+
+export interface ModelImportResult {
+  imported: number;
+  created: number;
+  updated: number;
+  models: SafeAiProviderModel[];
 }
 
 export const recognitionDefaults: RecognitionDefaults = {
@@ -80,23 +129,36 @@ export const recognitionDefaults: RecognitionDefaults = {
   maxAttempts: 3,
   backoffSeconds: 30,
   primaryProviderKey: null,
+  primaryModelId: null,
   secondaryProviderKey: null,
+  secondaryModelId: null,
   systemPrompt: defaultRecognitionPrompts.systemPrompt,
   userPrompt: defaultRecognitionPrompts.userPrompt,
   auditSampleRate: 0.1,
   auditProviderKey: null,
+  auditModelId: null,
 };
 
 const recognitionDefaultsKey = "recognition.defaults";
+const modelImportTimeoutMs = 10_000;
+
+type ProviderWithModels = AiProviderConfig & { models: AiProviderModel[] };
 
 export function isProviderProtocol(value: string): value is ProviderProtocol {
   return supportedProviderProtocols.includes(value as ProviderProtocol);
 }
 
+export function isProviderModelSource(value: string): value is ProviderModelSource {
+  return providerModelSources.includes(value as ProviderModelSource);
+}
+
 export async function getRecognitionSettings(): Promise<RecognitionSettingsPayload> {
   const [setting, providers] = await Promise.all([
     prisma.appSetting.findUnique({ where: { key: recognitionDefaultsKey } }),
-    prisma.aiProviderConfig.findMany({ orderBy: [{ priority: "asc" }, { createdAt: "asc" }] }),
+    prisma.aiProviderConfig.findMany({
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      include: { models: { orderBy: [{ priority: "asc" }, { createdAt: "asc" }] } },
+    }),
   ]);
 
   return {
@@ -126,7 +188,6 @@ export async function upsertAiProviderConfig(input: AiProviderConfigInput) {
     displayName: normalized.displayName,
     protocol: normalized.protocol,
     baseUrl: normalized.baseUrl,
-    model: normalized.model,
     enabled: normalized.enabled,
     priority: normalized.priority,
     temperature: normalized.temperature,
@@ -137,88 +198,95 @@ export async function upsertAiProviderConfig(input: AiProviderConfigInput) {
     ...(apiKey !== undefined ? { apiKey } : {}),
   };
 
-  if (input.id) {
-    return toSafeProviderConfig(
-      await prisma.aiProviderConfig.update({
+  const provider = input.id
+    ? await prisma.aiProviderConfig.update({
         where: { id: input.id },
         data,
-      }),
-    );
+      })
+    : await prisma.aiProviderConfig.upsert({
+        where: { providerKey: normalized.providerKey },
+        create: {
+          ...data,
+          apiKey: apiKey ?? "",
+        },
+        update: data,
+      });
+
+  for (const model of normalized.models) {
+    await upsertProviderModel(provider.id, model);
   }
 
   return toSafeProviderConfig(
-    await prisma.aiProviderConfig.upsert({
-      where: { providerKey: normalized.providerKey },
-      create: {
-        ...data,
-        apiKey: apiKey ?? "",
-      },
-      update: data,
+    await prisma.aiProviderConfig.findUniqueOrThrow({
+      where: { id: provider.id },
+      include: { models: { orderBy: [{ priority: "asc" }, { createdAt: "asc" }] } },
     }),
   );
 }
 
-export async function getActiveAiProviderConfig() {
-  const provider = await prisma.aiProviderConfig.findFirst({
-    where: {
-      enabled: true,
-      AND: [{ apiKey: { not: null } }, { apiKey: { not: "" } }],
-    },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-  });
-  if (!provider) {
-    throw new Error("No enabled AI provider with an API key is configured in the database settings");
+export async function getActiveRecognitionTarget() {
+  const targets = await getEnabledRecognitionTargets();
+  const target = targets[0];
+  if (!target) {
+    throw new Error("No enabled AI provider/model pair with an API key is configured in the database settings");
   }
-  return provider;
-}
-
-export interface RecognitionProviderPair {
-  primary: AiProviderConfig;
-  /** 副模型；未配置或与主相同时退化为 primary（即单模型双跑）。 */
-  secondary: AiProviderConfig;
-  defaults: RecognitionDefaults;
+  return target;
 }
 
 /**
- * 解析一个批次实际使用的主/副识别 provider（双模型交叉验证）。
- * 优先级：批次显式指定 > 设置页全局默认 > 按优先级回退到已启用 provider。
- * 副模型缺省时自动选一个与主模型不同的已启用 provider；没有别的可用则退化为主模型双跑。
+ * 解析一个批次实际使用的主/副识别 provider/model（双模型交叉验证）。
+ * 优先级：批次显式指定 > 设置页全局默认 > 按优先级回退到已启用 provider/model。
+ * 副模型缺省时自动选一个与主模型不同的已启用目标；没有别的可用则退化为主模型双跑。
  */
 export async function resolveRecognitionProviders(
-  batch: { primaryProviderKey?: string | null; secondaryProviderKey?: string | null } = {},
+  batch: {
+    primaryProviderKey?: string | null;
+    primaryModelId?: string | null;
+    secondaryProviderKey?: string | null;
+    secondaryModelId?: string | null;
+  } = {},
 ): Promise<RecognitionProviderPair> {
   const defaults = parseRecognitionDefaults(
     (await prisma.appSetting.findUnique({ where: { key: recognitionDefaultsKey } }))?.valueJson,
   );
-  const enabled = await prisma.aiProviderConfig.findMany({
-    where: { enabled: true, AND: [{ apiKey: { not: null } }, { apiKey: { not: "" } }] },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-  });
-  if (enabled.length === 0) {
-    throw new Error("No enabled AI provider with an API key is configured in the database settings");
+  const targets = await getEnabledRecognitionTargets();
+  if (targets.length === 0) {
+    throw new Error("No enabled AI provider/model pair with an API key is configured in the database settings");
   }
 
-  const byKey = new Map(enabled.map((provider) => [provider.providerKey, provider]));
-  const pick = (key?: string | null) => (key ? byKey.get(key) ?? null : null);
-
-  const primary = pick(batch.primaryProviderKey) ?? pick(defaults.primaryProviderKey) ?? enabled[0];
+  const primary =
+    pickRecognitionTarget(targets, batch.primaryProviderKey, batch.primaryModelId) ??
+    pickRecognitionTarget(targets, defaults.primaryProviderKey, defaults.primaryModelId) ??
+    targets[0];
   const secondary =
-    pick(batch.secondaryProviderKey) ??
-    pick(defaults.secondaryProviderKey) ??
-    enabled.find((provider) => provider.id !== primary.id) ??
+    pickRecognitionTarget(targets, batch.secondaryProviderKey, batch.secondaryModelId) ??
+    pickRecognitionTarget(targets, defaults.secondaryProviderKey, defaults.secondaryModelId) ??
+    targets.find((target) => target.provider.id !== primary.provider.id || target.model.id !== primary.model.id) ??
     primary;
 
   return { primary, secondary, defaults };
 }
 
-export function toSafeProviderConfig(provider: AiProviderConfig): SafeAiProviderConfig {
+export async function resolveAuditRecognitionTarget(
+  primary: RecognitionTarget,
+  secondary: RecognitionTarget,
+  auditProviderKey: string | null,
+  auditModelId: string | null,
+) {
+  const targets = await getEnabledRecognitionTargets();
+  const configured = pickRecognitionTarget(targets, auditProviderKey, auditModelId);
+  if (configured) return configured;
+  // 默认优先选与主模型不同的目标以获得独立视角。
+  return secondary.provider.id !== primary.provider.id || secondary.model.id !== primary.model.id ? secondary : primary;
+}
+
+export function toSafeProviderConfig(provider: ProviderWithModels): SafeAiProviderConfig {
   return {
     id: provider.id,
     providerKey: provider.providerKey,
     displayName: provider.displayName,
     protocol: toProtocol(provider.protocol),
     baseUrl: provider.baseUrl ?? "",
-    model: provider.model,
     enabled: provider.enabled,
     priority: provider.priority,
     temperature: provider.temperature,
@@ -229,26 +297,265 @@ export function toSafeProviderConfig(provider: AiProviderConfig): SafeAiProvider
     hasApiKey: Boolean(provider.apiKey?.trim()),
     createdAt: provider.createdAt.toISOString(),
     updatedAt: provider.updatedAt.toISOString(),
+    models: provider.models.map(toSafeProviderModel),
   };
+}
+
+export function toSafeProviderModel(model: AiProviderModel): SafeAiProviderModel {
+  return {
+    id: model.id,
+    providerId: model.providerId,
+    modelId: model.modelId,
+    displayName: model.displayName,
+    enabled: model.enabled,
+    priority: model.priority,
+    source: toProviderModelSource(model.source),
+    metadataJson: model.metadataJson,
+    createdAt: model.createdAt.toISOString(),
+    updatedAt: model.updatedAt.toISOString(),
+  };
+}
+
+export function deriveOpenAIModelsEndpoint(baseUrl: string | null | undefined) {
+  const raw = normalizeOptionalString(baseUrl) ?? defaultBaseUrl("openai_responses");
+  const url = new URL(raw);
+  const path = url.pathname.replace(/\/+$/, "");
+  url.pathname = path.endsWith("/v1") ? `${path}/models` : `${path}/v1/models`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export function parseOpenAICompatibleModelsResponse(payload: unknown) {
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { data?: unknown }).data)) {
+    throw new Error("Unsupported models response shape");
+  }
+  const seen = new Set<string>();
+  const models = [];
+  for (const entry of (payload as { data: unknown[] }).data) {
+    const modelId =
+      typeof entry === "string"
+        ? entry.trim()
+        : entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string"
+          ? (entry as { id: string }).id.trim()
+          : "";
+    if (!modelId || seen.has(modelId)) continue;
+    seen.add(modelId);
+    models.push({
+      modelId,
+      displayName: modelId,
+      metadataJson: JSON.stringify(entry && typeof entry === "object" ? entry : { id: modelId }),
+    });
+  }
+  if (!models.length) {
+    throw new Error("Models response did not contain model ids");
+  }
+  return models;
+}
+
+export async function importProviderModels(providerId: string, fetcher: typeof fetch = fetch): Promise<ModelImportResult> {
+  const provider = await prisma.aiProviderConfig.findUnique({
+    where: { id: providerId },
+    include: { models: true },
+  });
+  if (!provider) {
+    throw new Error("Provider not found");
+  }
+  if (provider.protocol !== "openai_responses") {
+    throw new Error("Model import is only available for OpenAI-compatible providers");
+  }
+  if (!provider.apiKey?.trim()) {
+    throw new Error("Provider API key is empty");
+  }
+
+  const endpoint = deriveOpenAIModelsEndpoint(provider.baseUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), modelImportTimeoutMs);
+  let response: Response;
+  try {
+    response = await fetcher(endpoint, {
+      method: "GET",
+      headers: { authorization: `Bearer ${provider.apiKey}` },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new Error(`Model import failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Model import failed: ${response.status} ${response.statusText}`.trim());
+  }
+
+  const models = parseOpenAICompatibleModelsResponse(await response.json());
+  let created = 0;
+  let updated = 0;
+  const existing = new Set(provider.models.map((model) => model.modelId));
+
+  for (const model of models) {
+    await prisma.aiProviderModel.upsert({
+      where: { providerId_modelId: { providerId, modelId: model.modelId } },
+      create: {
+        providerId,
+        modelId: model.modelId,
+        displayName: model.displayName,
+        enabled: true,
+        priority: nextImportedPriority(provider.models.length + created),
+        source: "imported",
+        metadataJson: model.metadataJson,
+      },
+      update: {
+        displayName: model.displayName,
+        source: "imported",
+        metadataJson: model.metadataJson,
+      },
+    });
+    if (existing.has(model.modelId)) updated += 1;
+    else created += 1;
+  }
+
+  const importedModels = await prisma.aiProviderModel.findMany({
+    where: { providerId },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+  });
+  return {
+    imported: models.length,
+    created,
+    updated,
+    models: importedModels.map(toSafeProviderModel),
+  };
+}
+
+async function getEnabledRecognitionTargets(): Promise<RecognitionTarget[]> {
+  const providers = await prisma.aiProviderConfig.findMany({
+    where: {
+      enabled: true,
+      AND: [{ apiKey: { not: null } }, { apiKey: { not: "" } }],
+    },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    include: {
+      models: {
+        where: { enabled: true },
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      },
+    },
+  });
+
+  return providers.flatMap((provider) => provider.models.map((model) => ({ provider, model })));
+}
+
+function pickRecognitionTarget(
+  targets: RecognitionTarget[],
+  providerKey?: string | null,
+  modelId?: string | null,
+) {
+  const normalizedProviderKey = normalizePromptString(providerKey);
+  const normalizedModelId = normalizePromptString(modelId);
+  if (!normalizedProviderKey) return null;
+  if (normalizedModelId) {
+    const exact = targets.find(
+      (target) => target.provider.providerKey === normalizedProviderKey && target.model.modelId === normalizedModelId,
+    );
+    if (exact) return exact;
+  }
+  return targets.find((target) => target.provider.providerKey === normalizedProviderKey) ?? null;
+}
+
+async function upsertProviderModel(providerId: string, input: NormalizedProviderModelInput) {
+  if (input.id) {
+    const existing = await prisma.aiProviderModel.findFirst({
+      where: { id: input.id, providerId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new Error("Provider model does not belong to this provider");
+    }
+    return prisma.aiProviderModel.update({
+      where: { id: input.id },
+      data: {
+        modelId: input.modelId,
+        displayName: input.displayName,
+        enabled: input.enabled,
+        priority: input.priority,
+        source: input.source,
+        metadataJson: input.metadataJson,
+      },
+    });
+  }
+  return prisma.aiProviderModel.upsert({
+    where: { providerId_modelId: { providerId, modelId: input.modelId } },
+    create: {
+      providerId,
+      modelId: input.modelId,
+      displayName: input.displayName,
+      enabled: input.enabled,
+      priority: input.priority,
+      source: input.source,
+      metadataJson: input.metadataJson,
+    },
+    update: {
+      displayName: input.displayName,
+      enabled: input.enabled,
+      priority: input.priority,
+      source: input.source,
+      metadataJson: input.metadataJson,
+    },
+  });
+}
+
+interface NormalizedProviderModelInput {
+  id?: string;
+  modelId: string;
+  displayName: string;
+  enabled: boolean;
+  priority: number;
+  source: ProviderModelSource;
+  metadataJson: string;
 }
 
 function normalizeProviderInput(input: AiProviderConfigInput) {
   const providerKey = normalizeRequiredString(input.providerKey, "providerKey");
   const displayName = normalizeRequiredString(input.displayName, "displayName");
-  const model = normalizeRequiredString(input.model, "model");
   const protocol = toProtocol(normalizeRequiredString(input.protocol, "protocol"));
+  const explicitModels = Array.isArray(input.models) ? input.models : [];
+  const legacyModel = normalizeOptionalString(input.model);
+  const models = explicitModels.map(normalizeProviderModelInput);
+  if (legacyModel && !models.some((model) => model.modelId === legacyModel)) {
+    models.push(
+      normalizeProviderModelInput({
+        modelId: legacyModel,
+        displayName: legacyModel,
+        enabled: true,
+        priority: 100,
+        source: "manual",
+      }),
+    );
+  }
   return {
     providerKey,
     displayName,
     protocol,
     baseUrl: normalizeOptionalString(input.baseUrl) ?? defaultBaseUrl(protocol),
-    model,
     enabled: Boolean(input.enabled),
     priority: clampInt(input.priority, 1, 999, 100),
     temperature: input.temperature == null ? null : Number(input.temperature),
     maxOutputTokens: clampInt(input.maxOutputTokens, 256, 16000, 2000),
     systemPrompt: normalizePromptString(input.systemPrompt),
     userPrompt: normalizePromptString(input.userPrompt),
+    metadataJson: normalizeJsonObjectString(input.metadataJson),
+    models,
+  };
+}
+
+function normalizeProviderModelInput(input: AiProviderModelInput): NormalizedProviderModelInput {
+  return {
+    id: normalizeOptionalString(input.id),
+    modelId: normalizeRequiredString(input.modelId, "modelId"),
+    displayName: normalizeOptionalString(input.displayName) ?? "",
+    enabled: input.enabled !== false,
+    priority: clampInt(input.priority, 1, 999, 100),
+    source: toProviderModelSource(normalizeOptionalString(input.source) ?? "manual"),
     metadataJson: normalizeJsonObjectString(input.metadataJson),
   };
 }
@@ -260,7 +567,7 @@ function normalizePromptString(value: unknown): string | null {
   return normalized ? normalized : null;
 }
 
-function parseRecognitionDefaults(raw?: string | null): RecognitionDefaults {
+export function parseRecognitionDefaults(raw?: string | null): RecognitionDefaults {
   if (!raw) return recognitionDefaults;
   try {
     return normalizeRecognitionDefaults(JSON.parse(raw) as Partial<RecognitionDefaults>);
@@ -281,17 +588,27 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     maxAttempts: clampInt(input.maxAttempts, 1, 10, recognitionDefaults.maxAttempts),
     backoffSeconds: clampInt(input.backoffSeconds, 1, 3600, recognitionDefaults.backoffSeconds),
     primaryProviderKey: normalizePromptString(input.primaryProviderKey),
+    primaryModelId: normalizePromptString(input.primaryModelId),
     secondaryProviderKey: normalizePromptString(input.secondaryProviderKey),
+    secondaryModelId: normalizePromptString(input.secondaryModelId),
     systemPrompt: normalizeOptionalString(input.systemPrompt) ?? recognitionDefaults.systemPrompt,
     userPrompt: normalizeOptionalString(input.userPrompt) ?? recognitionDefaults.userPrompt,
     auditSampleRate: clampNumber(input.auditSampleRate, 0, 1, recognitionDefaults.auditSampleRate),
     auditProviderKey: normalizePromptString(input.auditProviderKey),
+    auditModelId: normalizePromptString(input.auditModelId),
   };
 }
 
 function toProtocol(value: string): ProviderProtocol {
   if (!isProviderProtocol(value)) {
     throw new Error(`Unsupported AI provider protocol: ${value}`);
+  }
+  return value;
+}
+
+function toProviderModelSource(value: string): ProviderModelSource {
+  if (!isProviderModelSource(value)) {
+    throw new Error(`Unsupported provider model source: ${value}`);
   }
   return value;
 }
@@ -321,6 +638,10 @@ function normalizeJsonObjectString(value: unknown) {
     throw new Error("metadataJson must be a JSON object");
   }
   return JSON.stringify(parsed);
+}
+
+function nextImportedPriority(offset: number) {
+  return clampInt(100 + offset, 1, 999, 100);
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number) {

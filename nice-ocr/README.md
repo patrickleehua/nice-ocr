@@ -59,10 +59,12 @@ pnpm worker
 
 worker 从数据库任务队列领取识别任务，按设置中的策略调用 AI provider 并落库。未启动 worker 时，上传的图片只会入队、不会被识别。
 
-AI provider（模型 / Base URL / API Key / 协议 / 启用状态）**全部存数据库**，不读 `.env`。首次使用在 http://localhost:3000/settings 配置。支持协议：
+AI provider（Base URL / API Key / 协议 / 启用状态 / 模型目录）**全部存数据库**，不读 `.env`。首次使用在 http://localhost:3000/settings 配置。一个 provider 可以拥有多个模型选项，主识别、副识别和审核都选择具体的 provider/model pair，因此可以在同一个 provider 下用两个不同模型交叉校验。
 
 - `openai_responses` —— 官方 `openai` SDK 的 Responses API
 - `anthropic_messages` —— 官方 `@anthropic-ai/sdk` 的 Messages API
+
+OpenAI-compatible provider 可在设置页使用“导入”按钮按约定调用 models endpoint：Base URL 已以 `/v1` 结尾时请求 `<baseUrl>/models`，否则请求 `<baseUrl>/v1/models`。导入只是辅助动作，失败不会影响手动新增/编辑模型；再次导入会按 provider/model id 幂等更新 metadata，不会删除未返回的手动模型。
 
 ---
 
