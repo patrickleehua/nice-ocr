@@ -1,49 +1,38 @@
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/db/client";
 import type { DbClient } from "@/lib/db/types";
+import { getActiveScenarioId } from "@/lib/fields/active-scenario";
+import {
+  DEFAULT_EXPORT_TEMPLATE_ID,
+  getExportTemplate,
+  resolveTemplateColumns,
+  writeTemplateSheet,
+  type ExportSourceRow,
+} from "@/lib/workflows/export-templates";
 
 export const xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-export async function buildRecognitionExport(db: DbClient = prisma) {
+/**
+ * 按选定模板导出识别结果 xlsx。
+ * 列由「活动场景字段 + 元字段」经模板解析，样式（深色表头/数字格式/CJK 列宽/冻结首行）由共享引擎套用。
+ * 当前仅内置 v5 原版模板；模板系统已就绪，新增模板只需在 export-templates 注册表追加一项。
+ */
+export async function buildRecognitionExport(
+  templateId: string = DEFAULT_EXPORT_TEMPLATE_ID,
+  db: DbClient = prisma,
+) {
   const rows = await db.recognitionRow.findMany({
     where: { deletedAt: null },
     include: { document: true, batch: true },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { rowIndex: "asc" }],
   });
+  const scenarioId = await getActiveScenarioId();
+  const template = getExportTemplate(templateId);
+  const columns = resolveTemplateColumns(template, scenarioId);
+  const source = rows as unknown as ExportSourceRow[];
 
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("识别结果");
-  sheet.columns = [
-    { header: "批次", key: "batch", width: 24 },
-    { header: "图片名", key: "document", width: 24 },
-    { header: "月份", key: "month", width: 12 },
-    { header: "商品编码", key: "code", width: 12 },
-    { header: "商品名", key: "name", width: 20 },
-    { header: "单位", key: "unit", width: 8 },
-    { header: "数量", key: "qty", width: 10 },
-    { header: "单价", key: "price", width: 10 },
-    { header: "金额", key: "amount", width: 12 },
-    { header: "状态", key: "status", width: 10 },
-    { header: "风险", key: "risk", width: 10 },
-    { header: "备注", key: "remark", width: 20 },
-  ];
-  rows.forEach((row) => {
-    sheet.addRow({
-      batch: row.batch.name,
-      document: row.document.originalName,
-      month: row.normalizedMonth,
-      code: row.code,
-      name: row.name,
-      unit: row.unit,
-      qty: row.qty,
-      price: row.price,
-      amount: row.amount,
-      status: row.status,
-      risk: row.riskLevel,
-      remark: row.remark,
-    });
-  });
-
+  writeTemplateSheet(workbook, template.sheetName, columns, source);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 

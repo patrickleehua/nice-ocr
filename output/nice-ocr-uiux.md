@@ -634,3 +634,42 @@ Background and design: `output/nice-ocr-audit-module-research.md`. Targets the p
 - **Dashboard**: a "待复审" tile (flaggedRows) + "前往复审" link to `/results?audit=flagged`.
 - **Settings**: 审核模型 (audit provider, prefer one different from the primary for an independent lens) + 干净行抽样率 (auditSampleRate 0~1).
 - Non-goals: no full-AI re-audit, no auto-rewrite, no scheduled run, no cascade relations.
+
+## 15. Revision — Shell header cohesion (2026-06-18)
+
+修复反馈：「每个页面顶部都有 search / 业务有割裂感」。根因：顶栏的**全局产品搜索**（永远跳 `/results`，与当前页业务无关）+ **批次切换下拉**出现在每个页面，而每个页面体内又有自己的上下文搜索/筛选 → 顶部双重搜索冗余 + 顶栏控件与页面业务各自为政。
+
+修订后顶栏（app-shell header）= **统一应用 chrome，不再承载与页面冲突的业务搜索**：
+- **移除**顶栏全局产品搜索（搜索回归各页自己的上下文：批次搜批次、产品搜产品、结果搜结果、审核搜文档）。
+- **移除**顶栏「切换批次」下拉（与左侧「批次管理」导航 + 页面内上下文重复；切换批次走 `/batches`）。
+- 顶栏左侧改为**上下文面包屑**：`分区 · 当前页`（由路由匹配侧栏 navGroups 推导，如「工作区 · 审核工作台」），反映「我在哪」，是导航 chrome 而非内容标题。
+- 顶栏右侧保留真正的全局项：**队列状态**指示 + **上传图片** 主 CTA。
+- 各页保留自身 `h1` 标题 + 上下文搜索/筛选；面包屑（chrome）与 `h1`（内容）分层不冲突。
+- 约束不变：图标仅用 lucide、颜色取 token、无 emoji、无紫粉渐变。
+
+## 16. Revision — 交互体验修复（2026-06-18）
+
+修复反馈：批次点击不进预览、审核台布局拥挤（文件检查/搜索）、图片不可拖拽、侧边栏不能折叠、缺 README。
+
+- **批次列表整行可点击**：[batches-page.tsx](../nice-ocr/src/components/batches/batches-page.tsx) 的 `<tr>` 整行 `cursor-pointer` + `router.push(/batches/[id])` 进入详情（预览）；行尾加 `ChevronRight` 提示可进入；「上传」按钮 `stopPropagation` 不触发跳转。
+- **侧边栏可折叠**：[app-shell.tsx](../nice-ocr/src/components/app-shell/app-shell.tsx) 顶栏加折叠按钮（`PanelLeftClose`/`PanelLeftOpen`）。展开 `w-60`、折叠 `w-16` 仅留居中图标（label/分组标题隐藏，hover title 提示）；状态存 `localStorage`，`transition-[width]` 平滑。
+- **审核台三栏重构**：[review-page.tsx](../nice-ocr/src/components/review/review-page.tsx) 由「原图(含挤压的文件搜索) | 明细」两栏改为 **`文件列表(230px) | 原图预览 | 识别明细(更宽)`** 三栏。文件检查/搜索/过滤/分页独立成左列、可滚动；原图与明细各占独立列，互不挤压。
+- **原图可缩放 + 拖拽平移**：新增 [image-viewer.tsx](../nice-ocr/src/components/ui/image-viewer.tsx)（缩放按钮 + Ctrl+滚轮缩放 + 放大后按住拖拽平移，grab/grabbing 光标）。审核台原图改用该组件。
+- **README**：重写 [nice-ocr/README.md](../nice-ocr/README.md)，去除 create-next-app 样板，补全环境要求、快速开始、worker 启动、AI provider 配置、脚本表、路由、目录结构、测试与端口释放说明。
+- 约束不变：图标仅用 lucide、颜色取 token、无 emoji、无紫粉渐变。
+
+## 17. Revision — 审核「专注模式」（2026-06-18）
+
+反馈：审核台内容太杂、不专注，希望一个专注模式只保留高价值内容、排版人性化、一页快速管理。
+
+- **专注模式开关**：审核台头部加「专注模式」(`Maximize2`)；进入后头部替换为**精简控制条**：`退出专注 ǀ 文件名 ǀ 进度 N/总 ǀ 风险badge（点开风险说明）  ……  上一张 ǀ 快速跳转下拉 ǀ 下一张 ǀ 运行审核 ǀ 确认本单`。
+- **只留高价值内容**：专注模式布局从三栏收敛为**两栏 `原图预览 ǀ 识别明细`**，撑满视口高度（`min-h-[calc(100vh-9rem)]`）；隐藏「文件列表」「识别尝试」「风险详情」三块次要面板（风险通过控制条 badge + 风险说明抽屉随时可达）。识别明细表在专注模式下 `flex-1` 填满，可滚动审更多行。
+- **快速切换（一页管完）**：控制条内「快速跳转」原生下拉可直达任意文件；上一张/下一张按钮；**键盘 ←/→ 切换单据、Esc 退出**（在输入框/下拉内不拦截编辑，仅 Esc 生效）。
+- 退出专注回到三栏常规视图。普通/专注两套布局同源数据，切换不丢编辑上下文。
+- 约束不变：图标仅用 lucide、颜色取 token、无 emoji、无紫粉渐变。
+
+## 18. Fix — 状态徽章换行截断（2026-06-18）
+
+反馈：列表内状态徽章样式异常、没有完全展开。根因：[badge.tsx](../nice-ocr/src/components/ui/badge.tsx) 的 `Badge` 为固定高度 `h-6` 但缺少 `whitespace-nowrap`，在较窄列里较长中文标签（如「AI自动通过」「待人工复核」「混合(AI+人工)」）在圆角药丸内换行、被固定高度截断。
+
+修复：Badge 基础类加 `whitespace-nowrap shrink-0 leading-none`，药丸随文字横向撑开、永不换行，flex 容器内不被压缩。一处修复，所有状态徽章（批次/结果/审核/复审/审批模式）统一生效。验证：结果页 201 个徽章全部 `nowrap`、单行 24px、无截断。

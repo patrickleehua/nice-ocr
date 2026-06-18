@@ -68,6 +68,8 @@ export interface RecognitionRow {
   auditNote?: string;
   conflictReason?: string;
   remark?: string;
+  /** 场景声明的非核心字段（来自 RecognitionRow.extraJson） */
+  extra: Record<string, string>;
   updatedAt: string;
 }
 

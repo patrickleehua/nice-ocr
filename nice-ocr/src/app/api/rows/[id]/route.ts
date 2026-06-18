@@ -14,6 +14,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     price: body.price,
     amount: body.amount,
     remark: body.remark,
+    extra: body.extra,
   });
 
   if (!row) return NextResponse.json({ error: "Row not found" }, { status: 404 });

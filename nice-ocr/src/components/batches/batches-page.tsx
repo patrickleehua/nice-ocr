@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
-import { Plus, UploadCloud } from "lucide-react";
+import { ChevronRight, Plus, UploadCloud } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ApprovalModeBadge, BatchStatusBadge } from "@/components/ui/status";
@@ -25,6 +25,7 @@ interface ApiBatch {
 }
 
 export function BatchesPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
@@ -86,7 +87,7 @@ export function BatchesPage() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf,.zip,application/zip"
         className="hidden"
         onChange={(event) => {
           const files = event.target.files;
@@ -133,7 +134,13 @@ export function BatchesPage() {
           <option value="completed">完成</option>
           <option value="failed">失败</option>
         </select>
-        {uploadFiles.isPending ? <span className="text-xs text-muted-foreground">上传中...</span> : null}
+        {uploadFiles.isPending ? (
+          <span className="text-xs text-muted-foreground">上传解析中...</span>
+        ) : uploadFiles.isError ? (
+          <span className="text-xs text-danger">{(uploadFiles.error as Error)?.message ?? "上传失败"}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">支持 图片 / PDF / ZIP 压缩包</span>
+        )}
       </div>
 
       <TableWrap>
@@ -153,11 +160,14 @@ export function BatchesPage() {
           <tbody>
             {batches.length ? (
               batches.map((batch) => (
-                <tr key={batch.id} className="hover:bg-muted/70">
+                <tr
+                  key={batch.id}
+                  className="cursor-pointer transition-colors hover:bg-muted/70"
+                  onClick={() => router.push(`/batches/${batch.id}`)}
+                  title="点击查看批次详情与预览"
+                >
                   <td className={tableCellClass}>
-                    <Link href={`/batches/${batch.id}`} className="font-medium text-primary hover:underline">
-                      {batch.name}
-                    </Link>
+                    <span className="font-medium text-primary">{batch.name}</span>
                   </td>
                   <td className={tableCellClass}><BatchStatusBadge status={batch.status as BatchStatus} /></td>
                   <td className={tableCellClass}>{formatNumber(batch._count?.documents ?? 0)}</td>
@@ -166,14 +176,20 @@ export function BatchesPage() {
                   <td className={tableCellClass}>{batch.strategy}</td>
                   <td className={tableCellClass}>{formatDateTime(batch.createdAt)}</td>
                   <td className={tableCellClass}>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => triggerUpload(batch.id)}
-                      disabled={uploadFiles.isPending}
-                    >
-                      <UploadCloud size={14} />上传
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          triggerUpload(batch.id);
+                        }}
+                        disabled={uploadFiles.isPending}
+                      >
+                        <UploadCloud size={14} />上传
+                      </Button>
+                      <ChevronRight size={16} className="text-muted-foreground" aria-hidden />
+                    </div>
                   </td>
                 </tr>
               ))

@@ -229,6 +229,7 @@ storage/
 - `price`
 - `amount`
 - `remark`
+- `extraJson`（场景声明的非核心字段键值对，默认 `{}`；见第 16 节）
 - `status`
 - `riskLevel`
 - `riskReasonsJson`
@@ -696,3 +697,44 @@ Before implementation, Super Dev requires:
 - Declare UI icon library: Lucide.
 - Confirm design tokens from `output/nice-ocr-uiux.md`.
 - Establish page shell and shared types before business code.
+
+## 16. Field Schema Generalization & Export Templates
+
+> 由 change `field-schema-templates` 引入。把识别字段从写死的「副食品」场景解耦为单一事实源，统一驱动识别/入库/表格/导出。
+
+### 16.1 field-schema 单一事实源
+- `src/lib/fields/field-schema.ts`：`FieldDef { key, label, type, core, editable, recognitionHint?, numFmt?, width?, align? }` + `FieldScenario { id, name, description, fieldKeys[] }`。
+- `core: true` 的字段映射 RecognitionRow 真实列；`core: false` 存入 `RecognitionRow.extraJson`（`{ [key]: value }`）。
+- 内置字段目录 + 内置场景 `grocery`（= 现有核心字段）；活动场景 id 存 `AppSetting.fields.activeScenario`（缺省 grocery）。新增场景/字段 = 扩展注册表（在线字段构建器为后续迭代）。
+- 只读元字段（batch/document/normalizedMonth/status/risk）单列定义，供表格与导出引用，不参与识别。
+
+### 16.2 识别链路（已就绪扩展点，当前未激活）
+- 现状：实时识别 worker 尚未接通落库（识别行目前仅由 v5 导入产生），且仅有 grocery 一个场景，其字段正好 = v5 模板识别列，故「抽取字段 ↔ 模板」当前已成立，识别提示词/结构化 schema 暂保持 grocery 形态。
+- 扩展点（新增第二个场景/模板时再接通）：基于 field-schema 的活动场景字段动态生成结构化输出 schema 与提示词，`normalizeExtraction` 把结果拆为 {核心列} + {extraJson}。
+- 数据侧已就绪：`RecognitionRow.extraJson` 已落库；Row PATCH API 已支持 `extra` 合并写入；结果表/审核台已按 field-schema 动态出列（核心列 + extraJson 列）。
+
+### 16.3 导出模板
+- `src/lib/workflows/export-templates.ts`：`ExportTemplate { id, name, description, sheetName, filename, resolveColumns() }` 注册表（系统就绪，可随时追加模板）。
+- **当前仅内置一个模板 `v5-20260618`（默认）= 原始 v5 导出的精确复刻**：14 列 `图片名/图片标签/原始日期/归一化月份/商品编码/商品名/单位/数量/单价/金额/状态/备注/资料库冲突/冲突原因`，列名/顺序/列宽/数字格式与 `docs/v5_new_3 2` 的 `/api/export` 完全一致（状态英文枚举导出时映射回中文；资料库冲突取 `conflictState`，冲突原因取 `riskReasonsJson`）。承载「当前流程」。
+- 不预置其它模板；后续需要新模板时在注册表加一项即可（`resolveColumns` 可基于 field-schema 场景字段动态出列，单测 `export-templates.test.ts` 锁定 v5 列契约）。
+- 共享样式引擎对齐 v5：深色表头 `FF2D3748` + 白色加粗居中、按 `FieldDef.numFmt` 设数字格式、CJK 感知自适应列宽、冻结首行。
+- 取值优先级：元字段/派生（图片名/标签/状态/冲突…）→ 核心列 → `extraJson[key]`。
+- 「识别抽取字段 ↔ 模板」：导出模板与识别共用同一份 field-schema 场景字段（当前 grocery 场景字段 = v5 模板识别列），二者天然对应。
+
+### 16.4 导出 API（追加第 6 节 Export APIs）
+- `POST /api/exports/recognition` body `{ templateId }`（缺省 `standard`）。
+- `GET /api/exports/templates` 返回模板列表 `{ id, name, description }[]` 供前端模板选择。
+
+### 16.5 编辑抖动修复（前端）
+- 可编辑单元格改常驻输入框（本地状态 + onBlur/Enter + 防抖），消除展示/编辑两态 DOM 切换的布局位移。
+- 提交走乐观更新（`setQueryData` 就地改行），不再全表 `invalidate` 重拉；rows 排序改稳定键（`rowIndex`/`createdAt asc`），编辑不再跳行。
+
+## 17. 上传格式：图片 / PDF / ZIP（2026-06-18）
+
+上传不再限于图片。`src/lib/files/ingest.ts` `ingestUpload(name, buffer, mimeType)` 把每个上传文件**统一展开为图片列表**，下游（存储 / Document / 识别 / 预览）一律按图片处理、零改动：
+- **图片**：原样透传（按扩展名/ mime 推断类型）。
+- **PDF**：用 `pdf-to-img`（内部 `pdfjs-dist` + `@napi-rs/canvas` 预编译二进制）按 `scale: 2` **逐页渲染为 PNG**，每页一个 Document（命名 `<原名>-p<页号>.png`）。显式配置 `standardFontDataUrl` + `cMapUrl`（正斜杠 + 尾随 `/` 的 fs 路径，Node 字体工厂用 `fs.readFile` 读），保证标准字体与 CJK 文字正确渲染。
+- **ZIP**：用 `fflate` `unzipSync` 解压，对其中图片直接收录、PDF 逐页渲染，忽略目录 / 隐藏项 / `__MACOSX` / 其它格式。
+- 上传路由 [batches/[id]/upload](../nice-ocr/src/app/api/batches/[id]/upload/route.ts) 先 ingest 再逐图 `storeOriginal` + 建 Document + 入队；无可识别内容返回 400 友好提示。`maxDuration = 300` 容纳 PDF 渲染耗时。
+- 依赖：`fflate`、`pdf-to-img`、`pdfjs-dist`（直接依赖，便于解析字体/CMap 目录）。`@napi-rs/canvas`/`pdf-to-img`/`pdfjs-dist` 在 `next.config.ts` 的 `serverExternalPackages` 中外置，避免打包原生模块。
+- 前端：批次列表与批次详情的上传 `accept` 扩展为 `image/*,application/pdf,.pdf,.zip,application/zip`，并提示「支持 图片 / PDF / ZIP」+ 失败错误回显。

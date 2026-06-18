@@ -55,7 +55,22 @@ export type RowUpdateInput = {
   price?: number;
   amount?: number;
   remark?: string | null;
+  /** 场景声明的非核心字段，合并进 extraJson（不覆盖未提交的键）。 */
+  extra?: Record<string, unknown>;
 };
+
+/** 合并 extra patch 到既有 extraJson，返回新的 JSON 字符串；无 patch 时返回 undefined（不更新该列）。 */
+function mergeExtraJson(currentJson: string, patch?: Record<string, unknown>): string | undefined {
+  if (!patch || Object.keys(patch).length === 0) return undefined;
+  let current: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(currentJson || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed as Record<string, unknown>;
+  } catch {
+    current = {};
+  }
+  return JSON.stringify({ ...current, ...patch });
+}
 
 export async function updateRecognitionRow(
   id: string,
@@ -84,6 +99,7 @@ export async function updateRecognitionRow(
       price: input.price === undefined ? undefined : Number(input.price),
       amount: input.amount === undefined ? undefined : Number(input.amount),
       remark: input.remark ?? undefined,
+      extraJson: mergeExtraJson(before.extraJson, input.extra),
       riskLevel: validation.riskLevel,
       riskReasonsJson: JSON.stringify(validation.reasons),
       // 人工编辑待复审行即视为已复审。

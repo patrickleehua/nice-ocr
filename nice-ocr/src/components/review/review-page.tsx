@@ -1,19 +1,32 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, ImageOff, Maximize2, Search, ShieldCheck, Wand2, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Search, ShieldCheck, Wand2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { ApprovalModeBadge, AuditStateBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
-import { EditableCell } from "@/components/ui/editable-cell";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { FieldCell } from "@/components/ui/field-cell";
+import { ImageViewer } from "@/components/ui/image-viewer";
+import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
+import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
+import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RiskLevel, RowStatus } from "@/lib/types";
+
+function safeParseObject(raw?: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
 
 interface ApiRow {
   id: string;
@@ -24,6 +37,8 @@ interface ApiRow {
   qty: number;
   price: number;
   amount: number;
+  remark?: string | null;
+  extraJson?: string | null;
   riskLevel: RiskLevel;
   status: RowStatus;
   reviewClass: string;
@@ -31,6 +46,14 @@ interface ApiRow {
   auditState: string;
   auditNote?: string | null;
   auditSuggestionJson?: string | null;
+}
+
+/** 取字段在审核行上的当前值：核心列直接取，非核心列从 extraJson 取。 */
+function rowFieldValue(row: ApiRow, field: FieldDef): string | number {
+  if (isCoreColumn(field.key)) {
+    return (row as unknown as Record<string, string | number>)[field.key] ?? (field.type === "number" ? 0 : "");
+  }
+  return safeParseObject(row.extraJson)[field.key] ?? "";
 }
 
 interface ApiAttempt {
@@ -93,15 +116,13 @@ export function ReviewPage() {
   const queryClient = useQueryClient();
   const [riskOpen, setRiskOpen] = useState(false);
   const [override, setOverride] = useState<string | null>(null);
-  const [imageErrorId, setImageErrorId] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
   const [docSearch, setDocSearch] = useState("");
   const [docFilter, setDocFilter] = useState<ReviewState | "all">("all");
   const [docPage, setDocPage] = useState(1);
+  const [focus, setFocus] = useState(false);
 
   function selectDoc(id: string) {
     setOverride(id);
-    setZoom(1);
   }
 
   const { data: batchData } = useQuery<{ batches: Array<{ id: string }> }>({
@@ -116,7 +137,7 @@ export function ReviewPage() {
     enabled: Boolean(activeBatchId),
   });
 
-  const documents = batchDetail?.batch.documents ?? [];
+  const documents = useMemo(() => batchDetail?.batch.documents ?? [], [batchDetail]);
   const selectedId = override ?? documents[0]?.id ?? null;
   const selectedIndex = documents.findIndex((doc) => doc.id === selectedId);
 
@@ -128,6 +149,10 @@ export function ReviewPage() {
 
   const document = docData?.document;
   const rows = document?.rows ?? [];
+
+  const fieldSchema = useFieldSchema();
+  // 加载前用默认场景字段兜底，避免列结构跳变。
+  const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
@@ -147,9 +172,10 @@ export function ReviewPage() {
     onSuccess: invalidate,
   });
 
-  function commitField(id: string, field: "code" | "name" | "unit" | "qty" | "price" | "amount", raw: string) {
-    const numeric = field === "qty" || field === "price" || field === "amount";
-    updateRow.mutate({ id, patch: { [field]: numeric ? Number(raw || 0) : raw } });
+  function commitField(id: string, field: FieldDef, raw: string) {
+    const value = field.type === "number" ? Number(raw || 0) : raw;
+    const patch = isCoreColumn(field.key) ? { [field.key]: value } : { extra: { [field.key]: value } };
+    updateRow.mutate({ id, patch });
   }
 
   const runAudit = useMutation({
@@ -175,6 +201,30 @@ export function ReviewPage() {
     const next = documents[selectedIndex + offset];
     if (next) selectDoc(next.id);
   }
+
+  // 专注模式键盘导航：←/→ 切换单据，Esc 退出（在输入框/下拉里只处理 Esc，不拦截编辑）。
+  useEffect(() => {
+    if (!focus) return;
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
+      if (event.key === "Escape") {
+        setFocus(false);
+        return;
+      }
+      if (typing) return;
+      if (event.key === "ArrowLeft" && selectedIndex > 0) {
+        event.preventDefault();
+        setOverride(documents[selectedIndex - 1].id);
+      } else if (event.key === "ArrowRight" && selectedIndex < documents.length - 1) {
+        event.preventDefault();
+        setOverride(documents[selectedIndex + 1].id);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus, selectedIndex, documents]);
 
   if (!activeBatchId) {
     return <EmptyState message="暂无批次，请先创建批次并上传单据。" />;
@@ -202,92 +252,124 @@ export function ReviewPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">审核工作台</h1>
-            {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
+      {focus ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <Button size="sm" variant="secondary" onClick={() => setFocus(false)} title="退出专注模式（Esc）">
+              <Minimize2 size={15} />退出专注
+            </Button>
+            <span className="truncate text-sm font-medium">{document?.originalName ?? "单据"}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{selectedIndex + 1} / {documents.length}</span>
+            {document ? (
+              <button
+                type="button"
+                onClick={() => setRiskOpen(true)}
+                title={riskReasons.length ? riskReasons.join("、") : "查看风险说明"}
+                className="shrink-0"
+              >
+                <RiskBadge risk={document.riskLevel} />
+              </button>
+            ) : null}
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">左侧原图可缩放、文档可过滤；右侧点击单元格即可直接修改识别结果。</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => goTo(-1)} disabled={selectedIndex <= 0} title="上一张（←）">
+              <ChevronLeft size={15} />
+            </Button>
+            <select
+              value={selectedId ?? ""}
+              onChange={(event) => event.target.value && selectDoc(event.target.value)}
+              className="h-8 max-w-48 rounded-md border border-border bg-surface px-2 text-xs outline-none focus:border-primary"
+              title="快速跳转文件"
+            >
+              {documents.map((doc) => (
+                <option key={doc.id} value={doc.id}>
+                  {doc.originalName}
+                </option>
+              ))}
+            </select>
+            <Button size="sm" variant="secondary" onClick={() => goTo(1)} disabled={selectedIndex >= documents.length - 1} title="下一张（→）">
+              <ChevronRight size={15} />
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => runAudit.mutate()}
+              disabled={runAudit.isPending}
+              title="对机器自动通过的行做二次复查（需 worker 运行）"
+            >
+              <ShieldCheck size={15} />运行审核
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => selectedId && confirmRows.mutate({ documentId: selectedId })}
+              disabled={confirmRows.isPending || !rows.length}
+            >
+              <Check size={15} />确认本单
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="secondary" onClick={() => goTo(-1)} disabled={selectedIndex <= 0}>
-            <ChevronLeft size={15} />上一张
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => goTo(1)}
-            disabled={selectedIndex < 0 || selectedIndex >= documents.length - 1}
-          >
-            下一张<ChevronRight size={15} />
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => runAudit.mutate()}
-            disabled={runAudit.isPending}
-            title="对本批次机器自动通过的行做二次复查（需 worker 运行）"
-          >
-            <ShieldCheck size={15} />运行审核
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => selectedId && confirmRows.mutate({ documentId: selectedId })}
-            disabled={confirmRows.isPending || !rows.length}
-          >
-            <Check size={15} />确认本单所有行
-          </Button>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold">审核工作台</h1>
+              {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">左侧选择文件、中间查看原图（可缩放/拖拽）、右侧点击单元格直接修改识别结果。</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setFocus(true)} title="进入专注模式：放大原图与明细、隐藏次要面板，←/→ 切换单据">
+              <Maximize2 size={15} />专注模式
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => goTo(-1)} disabled={selectedIndex <= 0}>
+              <ChevronLeft size={15} />上一张
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => goTo(1)}
+              disabled={selectedIndex < 0 || selectedIndex >= documents.length - 1}
+            >
+              下一张<ChevronRight size={15} />
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => runAudit.mutate()}
+              disabled={runAudit.isPending}
+              title="对本批次机器自动通过的行做二次复查（需 worker 运行）"
+            >
+              <ShieldCheck size={15} />运行审核
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => selectedId && confirmRows.mutate({ documentId: selectedId })}
+              disabled={confirmRows.isPending || !rows.length}
+            >
+              <Check size={15} />确认本单所有行
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="grid min-h-[650px] gap-4 xl:grid-cols-[42%_1fr]">
+      <div
+        className={cn(
+          "grid gap-4",
+          focus
+            ? "min-h-[calc(100vh-9rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"
+            : "min-h-[640px] xl:grid-cols-[230px_minmax(0,1fr)_minmax(0,1.3fr)]",
+        )}
+      >
+        {/* 列 1：文件列表 —— 仅普通模式；专注模式用顶部精简控制条 + 快速跳转切换 */}
+        {!focus ? (
         <Panel className="flex min-h-0 flex-col">
           <PanelHeader>
-            <PanelTitle>{document?.originalName ?? "加载中..."}</PanelTitle>
-            {document ? <RiskBadge risk={document.riskLevel} /> : null}
+            <PanelTitle>文件</PanelTitle>
+            <span className="text-xs text-muted-foreground">{filteredDocs.length} 个</span>
           </PanelHeader>
-          <div className="flex items-center gap-1 border-b border-border px-4 py-2">
-            <Button size="icon" variant="ghost" aria-label="放大" onClick={() => setZoom((z) => Math.min(5, Number((z + 0.25).toFixed(2))))}>
-              <ZoomIn size={15} />
-            </Button>
-            <Button size="icon" variant="ghost" aria-label="缩小" onClick={() => setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))}>
-              <ZoomOut size={15} />
-            </Button>
-            <Button size="icon" variant="ghost" aria-label="适应窗口" onClick={() => setZoom(1)}>
-              <Maximize2 size={15} />
-            </Button>
-            <span className="ml-1 text-xs text-muted-foreground">{Math.round(zoom * 100)}%</span>
-            <span className="ml-auto text-[11px] text-muted-foreground">Ctrl+滚轮缩放</span>
-          </div>
-          <div
-            className="flex min-h-[360px] flex-1 items-start justify-center overflow-auto bg-muted p-4"
-            onWheel={(event) => {
-              if (!event.ctrlKey) return;
-              event.preventDefault();
-              setZoom((z) => Math.min(5, Math.max(0.25, Number((z - Math.sign(event.deltaY) * 0.25).toFixed(2)))));
-            }}
-          >
-            {selectedId && imageErrorId !== selectedId ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={selectedId}
-                src={apiPaths.documentImage(selectedId)}
-                alt={document?.originalName ?? "单据原图"}
-                style={{ width: `${zoom * 100}%`, maxWidth: zoom <= 1 ? "100%" : "none" }}
-                className="h-auto rounded border border-border bg-white object-contain shadow-sm"
-                onError={() => setImageErrorId(selectedId)}
-              />
-            ) : (
-              <div className="flex flex-col items-center gap-2 self-center text-muted-foreground">
-                <ImageOff size={28} />
-                <span className="text-xs">原图不可用（未上传或文件缺失）</span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-2 border-t border-border p-3">
+          <div className="flex flex-col gap-2 border-b border-border p-3">
             <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2 text-sm">
               <Search size={14} className="text-muted-foreground" />
               <input
@@ -296,7 +378,7 @@ export function ReviewPage() {
                   setDocSearch(event.target.value);
                   setDocPage(1);
                 }}
-                placeholder="按文件名筛选文档"
+                placeholder="搜索文件名"
                 className="h-full flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
               />
             </div>
@@ -318,73 +400,86 @@ export function ReviewPage() {
                 </button>
               ))}
             </div>
-            <div className="max-h-56 space-y-1 overflow-auto">
-              {pagedDocs.length ? (
-                pagedDocs.map((doc) => {
-                  const badge = docStateBadge[doc.reviewState];
-                  return (
-                    <button
-                      key={doc.id}
-                      onClick={() => selectDoc(doc.id)}
-                      className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
-                        doc.id === selectedId ? "border-primary bg-primary/5" : "border-border bg-surface hover:bg-muted"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium">{doc.originalName}</span>
-                        <Badge tone={badge.tone}>{badge.label}</Badge>
-                      </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
-                        <RiskBadge risk={doc.riskLevel} />
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="px-2 py-4 text-center text-xs text-muted-foreground">没有符合条件的文档</div>
-              )}
-            </div>
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>共 {filteredDocs.length} 个文档</span>
-              <div className="flex items-center gap-1">
-                <button
-                  className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
-                  onClick={() => setDocPage((current) => Math.max(1, current - 1))}
-                  disabled={safeDocPage <= 1}
-                >
-                  上一页
-                </button>
-                <span>{safeDocPage} / {docTotalPages}</span>
-                <button
-                  className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
-                  onClick={() => setDocPage((current) => Math.min(docTotalPages, current + 1))}
-                  disabled={safeDocPage >= docTotalPages}
-                >
-                  下一页
-                </button>
-              </div>
+          </div>
+          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+            {pagedDocs.length ? (
+              pagedDocs.map((doc) => {
+                const badge = docStateBadge[doc.reviewState];
+                return (
+                  <button
+                    key={doc.id}
+                    onClick={() => selectDoc(doc.id)}
+                    className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
+                      doc.id === selectedId ? "border-primary bg-primary/5" : "border-border bg-surface hover:bg-muted"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs font-medium">{doc.originalName}</span>
+                      <Badge tone={badge.tone}>{badge.label}</Badge>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
+                      <RiskBadge risk={doc.riskLevel} />
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="px-2 py-4 text-center text-xs text-muted-foreground">没有符合条件的文档</div>
+            )}
+          </div>
+          <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            <span>{safeDocPage} / {docTotalPages}</span>
+            <div className="flex items-center gap-1">
+              <button
+                className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+                onClick={() => setDocPage((current) => Math.max(1, current - 1))}
+                disabled={safeDocPage <= 1}
+              >
+                上一页
+              </button>
+              <button
+                className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
+                onClick={() => setDocPage((current) => Math.min(docTotalPages, current + 1))}
+                disabled={safeDocPage >= docTotalPages}
+              >
+                下一页
+              </button>
             </div>
           </div>
         </Panel>
+        ) : null}
 
-        <div className="space-y-4">
-          <Panel>
+        {/* 列 2：原图预览（可缩放 + 拖拽平移） */}
+        <Panel className="flex min-h-0 flex-col">
+          <PanelHeader>
+            <PanelTitle className="truncate">{document?.originalName ?? "单据预览"}</PanelTitle>
+            {document ? <RiskBadge risk={document.riskLevel} /> : null}
+          </PanelHeader>
+          <ImageViewer
+            className="flex-1"
+            src={selectedId ? apiPaths.documentImage(selectedId) : null}
+            alt={document?.originalName ?? "单据原图"}
+          />
+
+        </Panel>
+
+        <div className={cn("min-w-0", focus ? "flex min-h-0 flex-col" : "space-y-4")}>
+          <Panel className={cn(focus && "flex min-h-0 flex-1 flex-col")}>
             <PanelHeader>
               <PanelTitle>识别明细</PanelTitle>
               <span className="text-xs text-muted-foreground">{rows.length} 行 · 点击单元格可编辑</span>
             </PanelHeader>
-            <div className="max-h-[360px] overflow-auto">
+            <div className={cn("overflow-auto", focus ? "min-h-0 flex-1" : "max-h-[360px]")}>
               <DataTable>
                 <thead className={tableHeadClass}>
                   <tr>
                     <th className={tableCellClass}>行</th>
-                    <th className={tableCellClass}>产品编码</th>
-                    <th className={tableCellClass}>产品名称</th>
-                    <th className={tableCellClass}>单位</th>
-                    <th className={tableCellClass}>数量</th>
-                    <th className={tableCellClass}>单价</th>
-                    <th className={tableCellClass}>金额</th>
+                    {fields.map((field) => (
+                      <th key={field.key} className={tableCellClass}>
+                        {field.label}
+                      </th>
+                    ))}
                     <th className={tableCellClass}>状态</th>
                     <th className={tableCellClass}>标识类别</th>
                     <th className={tableCellClass}>操作</th>
@@ -395,38 +490,16 @@ export function ReviewPage() {
                     rows.map((row, index) => (
                       <tr key={row.id} className="hover:bg-muted/40">
                         <td className={tableCellClass}>{index + 1}</td>
-                        <EditableCell
-                          value={row.code ?? ""}
-                          format={(value) => (value ? String(value) : "-")}
-                          onCommit={(next) => commitField(row.id, "code", next)}
-                        />
-                        <EditableCell value={row.name} onCommit={(next) => commitField(row.id, "name", next)} />
-                        <EditableCell
-                          value={row.unit ?? ""}
-                          format={(value) => (value ? String(value) : "-")}
-                          onCommit={(next) => commitField(row.id, "unit", next)}
-                        />
-                        <EditableCell
-                          value={row.qty}
-                          type="number"
-                          align="right"
-                          format={(value) => Number(value ?? 0).toFixed(2)}
-                          onCommit={(next) => commitField(row.id, "qty", next)}
-                        />
-                        <EditableCell
-                          value={row.price}
-                          type="number"
-                          align="right"
-                          format={(value) => formatCurrency(Number(value ?? 0))}
-                          onCommit={(next) => commitField(row.id, "price", next)}
-                        />
-                        <EditableCell
-                          value={row.amount}
-                          type="number"
-                          align="right"
-                          format={(value) => formatCurrency(Number(value ?? 0))}
-                          onCommit={(next) => commitField(row.id, "amount", next)}
-                        />
+                        {fields.map((field) => (
+                          <FieldCell
+                            key={field.key}
+                            value={rowFieldValue(row, field)}
+                            type={field.type === "number" ? "number" : "text"}
+                            align={field.align ?? (field.type === "number" ? "right" : "left")}
+                            disabled={!field.editable}
+                            onCommit={(next) => commitField(row.id, field, next)}
+                          />
+                        ))}
                         <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
                         <td className={tableCellClass}>
                           <div className="flex flex-col items-start gap-1">
@@ -465,7 +538,7 @@ export function ReviewPage() {
                     ))
                   ) : (
                     <tr>
-                      <td className={tableCellClass} colSpan={10}>
+                      <td className={tableCellClass} colSpan={4 + fields.length}>
                         <span className="text-muted-foreground">{isLoading ? "加载中..." : "该文档暂无识别行"}</span>
                       </td>
                     </tr>
@@ -475,6 +548,8 @@ export function ReviewPage() {
             </div>
           </Panel>
 
+          {!focus ? (
+          <>
           <Panel>
             <PanelHeader>
               <PanelTitle>识别尝试</PanelTitle>
@@ -510,6 +585,8 @@ export function ReviewPage() {
               <Button size="sm" variant="primary" onClick={() => setRiskOpen(true)}>查看风险说明</Button>
             </div>
           </Panel>
+          </>
+          ) : null}
         </div>
       </div>
       <RiskDetailDrawer open={riskOpen} onClose={() => setRiskOpen(false)} />

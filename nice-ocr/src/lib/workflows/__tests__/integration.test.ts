@@ -203,7 +203,7 @@ describe("workflow integration", () => {
 
       const rebuild = await rebuildProductLibrary({}, tx);
       const products = await tx.product.findMany({ include: { conflicts: true } });
-      const recognitionWorkbook = await readWorkbook(await buildRecognitionExport(tx));
+      const recognitionWorkbook = await readWorkbook(await buildRecognitionExport(undefined, tx));
       const productWorkbook = await readWorkbook(await buildProductExport(tx));
 
       assert.equal(rebuild.products, 2);

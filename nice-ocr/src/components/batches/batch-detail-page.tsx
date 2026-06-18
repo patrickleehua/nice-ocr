@@ -72,7 +72,7 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf,.zip,application/zip"
         className="hidden"
         onChange={(event) => {
           if (event.target.files?.length) uploadFiles.mutate(event.target.files);
@@ -91,9 +91,16 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
             {batch ? <BatchStatusBadge status={batch.status as BatchStatus} /> : null}
           </div>
         </div>
-        <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
-          <UploadCloud size={15} />{uploadFiles.isPending ? "上传中..." : "上传图片"}
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
+            <UploadCloud size={15} />{uploadFiles.isPending ? "上传解析中..." : "上传文件"}
+          </Button>
+          {uploadFiles.isError ? (
+            <span className="text-xs text-danger">{(uploadFiles.error as Error)?.message ?? "上传失败"}</span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">支持 图片 / PDF / ZIP</span>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">

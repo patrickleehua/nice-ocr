@@ -122,6 +122,7 @@ model RecognitionRow {
   price               Float                @default(0)
   amount              Float                @default(0)
   remark              String?
+  extraJson           String               @default("{}")
   status              String               @default("pending")
   reviewClass         String               @default("pending_review")
   riskLevel           String               @default("low")

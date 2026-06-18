@@ -1,15 +1,17 @@
 "use client";
 
-import { Download, Filter, RotateCcw, Trash2 } from "lucide-react";
+import { Filter, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AuditStateBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
-import { EditableCell } from "@/components/ui/editable-cell";
-import { formatCurrency } from "@/lib/utils";
-import { apiDownload, apiGet, apiJson } from "@/lib/api/client";
+import { FieldCell } from "@/components/ui/field-cell";
+import { ExportMenu } from "@/components/results/export-menu";
+import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
+import { useFieldSchema } from "@/lib/fields/use-field-schema";
+import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
 
@@ -25,6 +27,7 @@ interface ApiRecognitionRow {
   price: number;
   amount: number;
   remark?: string | null;
+  extraJson?: string | null;
   riskLevel: RiskLevel;
   status: RowStatus;
   reviewClass: string;
@@ -34,6 +37,22 @@ interface ApiRecognitionRow {
   riskReasonsJson?: string | null;
   batch?: { name: string };
   document?: { originalName: string };
+}
+
+interface RowsPage {
+  rows: ApiRecognitionRow[];
+  total: number;
+  page: number;
+}
+
+function safeParseObject(raw?: string | null): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
 }
 
 function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
@@ -63,7 +82,36 @@ function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
     auditNote: row.auditNote ?? undefined,
     conflictReason: reasons.length ? reasons.join("、") : undefined,
     remark: row.remark ?? "",
+    extra: safeParseObject(row.extraJson),
     updatedAt: "",
+  };
+}
+
+/** 取字段在展示行上的当前值：核心列直接取，非核心列从 extra 取。 */
+function fieldValue(row: RecognitionRow, field: FieldDef): string | number {
+  if (isCoreColumn(field.key)) {
+    return (row as unknown as Record<string, string | number>)[field.key] ?? (field.type === "number" ? 0 : "");
+  }
+  return row.extra[field.key] ?? "";
+}
+
+/** 把一次字段编辑乐观地合并进已缓存的某一行（核心列或 extraJson）。 */
+function patchCachedRow(old: RowsPage | undefined, id: string, patch: Record<string, unknown>): RowsPage | undefined {
+  if (!old?.rows) return old;
+  return {
+    ...old,
+    rows: old.rows.map((row) => {
+      if (row.id !== id) return row;
+      const next: ApiRecognitionRow = { ...row };
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === "extra") {
+          next.extraJson = JSON.stringify({ ...safeParseObject(row.extraJson), ...(value as Record<string, unknown>) });
+        } else {
+          (next as unknown as Record<string, unknown>)[key] = value;
+        }
+      }
+      return next;
+    }),
   };
 }
 
@@ -80,6 +128,10 @@ export function ResultsPage() {
     name: searchParams.get("name") ?? "",
   });
 
+  const fieldSchema = useFieldSchema();
+  // 加载前用默认场景字段兜底，避免初次渲染列结构跳变。
+  const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
+
   const queryString = (() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
     if (filters.status) params.set("status", filters.status);
@@ -89,7 +141,7 @@ export function ResultsPage() {
     return params.toString();
   })();
 
-  const { data, isLoading } = useQuery<{ rows: ApiRecognitionRow[]; total: number; page: number }>({
+  const { data, isLoading } = useQuery<RowsPage>({
     queryKey: ["rows", queryString],
     queryFn: () => apiGet(`${apiPaths.rows}?${queryString}`),
   });
@@ -98,39 +150,52 @@ export function ResultsPage() {
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["rows"] });
-    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  };
-
   const updateRow = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
       apiJson(apiPaths.row(id), { method: "PATCH", body: JSON.stringify(patch) }),
-    onSuccess: invalidate,
+    // 乐观更新：就地改缓存行，不重排不闪烁；后台静默校正，避免编辑后整表重拉跳行。
+    onMutate: async ({ id, patch }) => {
+      await queryClient.cancelQueries({ queryKey: ["rows"] });
+      queryClient.setQueriesData<RowsPage>({ queryKey: ["rows"] }, (old) => patchCachedRow(old, id, patch));
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["rows"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
-  function commitField(id: string, field: "code" | "name" | "unit" | "qty" | "price" | "amount", raw: string) {
-    const numeric = field === "qty" || field === "price" || field === "amount";
-    updateRow.mutate({ id, patch: { [field]: numeric ? Number(raw || 0) : raw } });
+
+  function commitField(id: string, field: FieldDef, raw: string) {
+    const value = field.type === "number" ? Number(raw || 0) : raw;
+    const patch = isCoreColumn(field.key) ? { [field.key]: value } : { extra: { [field.key]: value } };
+    updateRow.mutate({ id, patch });
   }
+
   const confirmRow = useMutation({
     mutationFn: (id: string) =>
       apiJson(apiPaths.rowsBulkConfirm, { method: "POST", body: JSON.stringify({ rowIds: [id] }) }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["rows"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
   const excludeRow = useMutation({
     mutationFn: (id: string) => apiJson(apiPaths.row(id), { method: "DELETE" }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["rows"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
   });
   const rebuild = useMutation({
     mutationFn: () => apiJson(apiPaths.productsRebuild, { method: "POST", body: JSON.stringify({}) }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["products"] }),
   });
-  const exportRows = useMutation({ mutationFn: () => apiDownload(apiPaths.exportsRecognition) });
 
   function patchFilter(patch: Partial<typeof filters>) {
     setPage(1);
     setFilters((current) => ({ ...current, ...patch }));
   }
+
+  const columnCount = 4 + fields.length + 6;
 
   return (
     <div className="space-y-4">
@@ -143,9 +208,7 @@ export function ResultsPage() {
           <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
             <RotateCcw size={15} />重建产品库
           </Button>
-          <Button size="sm" variant="primary" onClick={() => exportRows.mutate()} disabled={exportRows.isPending}>
-            <Download size={15} />导出
-          </Button>
+          <ExportMenu />
         </div>
       </div>
 
@@ -203,12 +266,11 @@ export function ResultsPage() {
               <th className={tableCellClass}>批次</th>
               <th className={tableCellClass}>文档</th>
               <th className={tableCellClass}>月份</th>
-              <th className={tableCellClass}>产品编码</th>
-              <th className={tableCellClass}>产品名称</th>
-              <th className={tableCellClass}>单位</th>
-              <th className={tableCellClass}>数量</th>
-              <th className={tableCellClass}>单价</th>
-              <th className={tableCellClass}>金额</th>
+              {fields.map((field) => (
+                <th key={field.key} className={tableCellClass}>
+                  {field.label}
+                </th>
+              ))}
               <th className={tableCellClass}>风险</th>
               <th className={tableCellClass}>状态</th>
               <th className={tableCellClass}>标识类别</th>
@@ -225,38 +287,16 @@ export function ResultsPage() {
                   <td className={tableCellClass}>{row.batchName}</td>
                   <td className={tableCellClass}>{row.documentName}</td>
                   <td className={tableCellClass}>{row.month || "-"}</td>
-                  <EditableCell
-                    value={row.code}
-                    format={(value) => (value ? String(value) : "-")}
-                    onCommit={(next) => commitField(row.id, "code", next)}
-                  />
-                  <EditableCell value={row.name} onCommit={(next) => commitField(row.id, "name", next)} />
-                  <EditableCell
-                    value={row.unit}
-                    format={(value) => (value ? String(value) : "-")}
-                    onCommit={(next) => commitField(row.id, "unit", next)}
-                  />
-                  <EditableCell
-                    value={row.qty}
-                    type="number"
-                    align="right"
-                    format={(value) => Number(value ?? 0).toFixed(2)}
-                    onCommit={(next) => commitField(row.id, "qty", next)}
-                  />
-                  <EditableCell
-                    value={row.price}
-                    type="number"
-                    align="right"
-                    format={(value) => formatCurrency(Number(value ?? 0))}
-                    onCommit={(next) => commitField(row.id, "price", next)}
-                  />
-                  <EditableCell
-                    value={row.amount}
-                    type="number"
-                    align="right"
-                    format={(value) => formatCurrency(Number(value ?? 0))}
-                    onCommit={(next) => commitField(row.id, "amount", next)}
-                  />
+                  {fields.map((field) => (
+                    <FieldCell
+                      key={field.key}
+                      value={fieldValue(row, field)}
+                      type={field.type === "number" ? "number" : "text"}
+                      align={field.align ?? (field.type === "number" ? "right" : "left")}
+                      disabled={!field.editable}
+                      onCommit={(next) => commitField(row.id, field, next)}
+                    />
+                  ))}
                   <td className={tableCellClass}><RiskBadge risk={row.risk} /></td>
                   <td className={tableCellClass}><RowStatusBadge status={row.status} /></td>
                   <td className={tableCellClass}><ReviewClassBadge value={row.reviewClass} /></td>
@@ -291,7 +331,7 @@ export function ResultsPage() {
               ))
             ) : (
               <tr>
-                <td className={tableCellClass} colSpan={16}>
+                <td className={tableCellClass} colSpan={columnCount}>
                   <span className="text-muted-foreground">{isLoading ? "加载中..." : "没有符合条件的记录"}</span>
                 </td>
               </tr>

@@ -1,116 +1,152 @@
 # nice-ocr
 
-副食品单据图片识别、审核、产品库冲突维护工作台。
+单据图片识别、人工审核、产品库冲突维护与 Excel 导出的本地优先全栈工作台。
 
-当前重构方向：
+上传单据图片 → AI 视觉模型识别表格明细 → 双模型交叉校验 + 风险规则 → 人工审核/编辑/确认 → 二次审核复查 → 导出 Excel / 维护产品库。
 
-- Next.js App Router 全栈应用
-- SQLite + Prisma 本地持久化
-- 数据库任务队列和 worker
-- OpenAI Responses / Anthropic Messages SDK 视觉模型识别
-- 批次、文档、识别行、产品库、冲突、导入、导出页面
+---
 
-## Windows 验证步骤
+## 技术栈
 
-WSL 环境当前无法稳定编译本项目，请在 Windows 终端里执行：
+- **Next.js 16（App Router, Turbopack）** + React 19 + TypeScript
+- **SQLite + Prisma 7**（driver adapter: better-sqlite3），本地优先持久化
+- 数据库任务队列 + 独立 **worker** 进程（有界并发识别、重试、双模型校验、审核）
+- AI 视觉识别：`openai`（Responses API）/ `@anthropic-ai/sdk`（Messages API）
+- Tailwind CSS 4 + lucide-react 图标 + TanStack Table / Query
+- 字段由 `src/lib/fields/field-schema.ts` 单一事实源驱动（识别 / 表格 / 导出共享）
+
+---
+
+## 环境要求
+
+- Node.js ≥ 20（已在 Node 22 验证）
+- [pnpm](https://pnpm.io)（仓库使用 `pnpm-lock.yaml`；`npm` 亦可，命令把 `pnpm` 换成 `npm run`）
+- Windows / macOS / Linux 均可（开发在 Windows 验证）
+
+---
+
+## 快速开始
 
 ```bash
 cd nice-ocr
+
+# 1. 安装依赖
 pnpm install
-copy .env.example .env
+
+# 2. 配置环境变量（数据库地址等）
+cp .env.example .env        # Windows: copy .env.example .env
+
+# 3. 初始化数据库（生成 client + 建表 + 可选种子）
 pnpm db:generate
 pnpm db:push
-pnpm db:seed
-pnpm test
-pnpm build
+pnpm db:seed                # 可选：写入演示数据
+
+# 4. 启动开发服务器
 pnpm dev
 ```
 
-如果 `package.json` 有依赖变化，先重新执行 `pnpm install`，再运行 Prisma 和 build 命令。
+打开 http://localhost:3000 。
 
-打开：
+> 改动 `prisma/schema.prisma` 后，务必重新执行 `pnpm db:generate`（再 `pnpm db:push`），否则运行时会报 Prisma client 过期。
 
-```text
-http://localhost:3000
-```
+### 启用真实 AI 识别（worker）
 
-可选 worker：
+识别在**独立 worker 进程**中跑（与 Next 服务器分开）。开发时需另开一个终端：
 
 ```bash
 pnpm worker
 ```
 
-如果需要真实 AI 识别，进入 `/settings` 配置数据库中的 AI Provider。模型、Base URL、API Key、协议和启用状态都从数据库读取，不从 `.env` 读取。
+worker 从数据库任务队列领取识别任务，按设置中的策略调用 AI provider 并落库。未启动 worker 时，上传的图片只会入队、不会被识别。
 
-支持的协议：
+AI provider（模型 / Base URL / API Key / 协议 / 启用状态）**全部存数据库**，不读 `.env`。首次使用在 http://localhost:3000/settings 配置。支持协议：
 
-- `openai_responses`：使用官方 `openai` SDK 的 Responses API
-- `anthropic_messages`：使用官方 `@anthropic-ai/sdk` 的 Messages API
+- `openai_responses` —— 官方 `openai` SDK 的 Responses API
+- `anthropic_messages` —— 官方 `@anthropic-ai/sdk` 的 Messages API
 
-## 已实现入口
+---
 
-- `/` 仪表盘
-- `/batches` 批次列表
-- `/batches/batch-202406` 批次详情
-- `/results` 全部结果
-- `/review` 审核工作台
-- `/products` 产品库
-- `/conflicts` 冲突管理
-- `/import` v5 导入
-- `/settings` 设置
+## npm/pnpm 脚本
 
-## API 草案
+| 脚本 | 作用 |
+| --- | --- |
+| `pnpm dev` | 启动 Next 开发服务器（Turbopack，端口 3000） |
+| `pnpm worker` | 启动识别 worker（队列消费 + AI 识别 + 审核），开发时需单独运行 |
+| `pnpm build` | 生产构建 |
+| `pnpm start` | 启动生产服务器（需先 `build`） |
+| `pnpm lint` | ESLint 检查 |
+| `pnpm test` | 跑测试（`scripts/test.ts`，使用隔离的 `test.db`，不污染开发库） |
+| `pnpm db:generate` | 生成 Prisma client |
+| `pnpm db:push` | 将 schema 同步到数据库（无迁移文件，本地优先） |
+| `pnpm db:migrate` | 创建/应用迁移（需要正式迁移历史时使用） |
+| `pnpm db:seed` | 写入演示种子数据 |
 
-- `GET/POST /api/batches`
-- `GET /api/batches/:id`
-- `POST /api/batches/:id/upload`
-- `GET /api/documents/:id`
-- `GET /api/documents/:id/image`
-- `POST /api/documents/:id/retry`
-- `GET /api/rows`
-- `PATCH/DELETE /api/rows/:id`
-- `POST /api/rows/bulk-confirm`
-- `GET /api/products`
-- `PATCH /api/products/:id`
-- `POST /api/products/rebuild`
-- `GET /api/conflicts`
-- `POST /api/exports/recognition`
-- `POST /api/exports/products`
-- `POST /api/import/v5`
-- `GET/PUT /api/settings`
-- `POST /api/settings/providers/:id/test`
+> 生产模式 `pnpm start` 在后台运行时，停止需按 PID 结束进程（端口不会自动释放）：
+> `netstat -ano | findstr :3000` 找到 PID，再 `taskkill /PID <PID> /F`。
 
-## Getting Started
+---
 
-First, run the development server:
+## 典型工作流
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+1. **新建批次** → `/batches`，点「新建批次」。
+2. **上传单据** → 批次列表点整行进入批次详情，或用「上传」按钮。支持**图片**（jpg/png/webp 等）、**PDF**（每页自动渲染为一张图）、以及包含上述文件的 **ZIP 压缩包**（服务端解压、PDF 逐页展开，每张图一条 Document）。
+3. **运行 worker** → `pnpm worker`，等待识别完成（顶栏队列状态指示）。
+4. **审核** → `/review`：左侧选文件、中间看原图（可缩放/拖拽）、右侧逐格编辑并确认。
+5. **二次审核**（可选）→ 审核台「运行审核」对机器自动通过的行做复查，待复审行进入复审队列。
+6. **导出** → `/results` 右上「导出」，输出 Excel。
+7. **产品库 / 冲突** → `/products`、`/conflicts` 维护资料库与重名冲突。
+
+---
+
+## 页面路由
+
+| 路由 | 页面 |
+| --- | --- |
+| `/` | 仪表盘 |
+| `/batches` · `/batches/[id]` | 批次列表 / 批次详情（文件 + 预览） |
+| `/results` | 全部结果（筛选 / 内联编辑 / 导出） |
+| `/review` | 审核工作台（原图 + 识别明细） |
+| `/products` · `/conflicts` | 产品库 / 冲突管理 |
+| `/import` | v5 历史数据导入 |
+| `/settings` | AI provider、识别策略、审核设置 |
+
+---
+
+## 目录结构（节选）
+
+```
+nice-ocr/
+├─ src/app/            # App Router 页面 + /api 路由
+├─ src/components/     # 页面与 UI 组件（app-shell / results / review / ...）
+├─ src/lib/
+│  ├─ fields/          # 字段 schema 单一事实源（识别/表格/导出共享）
+│  ├─ recognition/     # provider、schema、审核、设置
+│  ├─ workflows/       # 行更新、产品库、导出模板、v5 导入
+│  ├─ queue/           # 数据库任务队列
+│  └─ db/              # Prisma client
+├─ scripts/worker.ts   # 识别 worker 入口
+├─ prisma/schema.prisma
+└─ .env.example
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 测试
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+pnpm test
+```
 
-## Learn More
+测试通过 `scripts/test.ts` 运行，使用独立的 `test.db`，不影响 `dev.db`。
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 环境变量
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+`.env`（见 `.env.example`）：
 
-## Deploy on Vercel
+| 变量 | 说明 |
+| --- | --- |
+| `DATABASE_URL` | SQLite 地址，默认 `file:./dev.db` |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+AI provider 的密钥与配置不放 `.env`，统一在 `/settings` 写入数据库。

@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -11,7 +11,8 @@ import {
   FileImage,
   FileInput,
   LayoutDashboard,
-  Search,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Table2,
   Upload,
@@ -54,8 +55,23 @@ interface BatchOption {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const [search, setSearch] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+
+  // 折叠状态持久化（localStorage），初值 false 以避免 SSR/CSR 水合不一致，挂载后再同步。
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.localStorage.getItem("sidebar-collapsed") === "1") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
+      setCollapsed(true);
+    }
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((current) => {
+      const next = !current;
+      if (typeof window !== "undefined") window.localStorage.setItem("sidebar-collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
 
   const { data: batchData } = useQuery<{ batches: BatchOption[] }>({
     queryKey: ["batches"],
@@ -70,27 +86,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const queued = summary?.metrics.queued ?? 0;
   const activeBatchId = batches[0]?.id;
 
-  function submitSearch() {
-    const q = search.trim();
-    router.push(q ? `/results?name=${encodeURIComponent(q)}` : "/results");
-  }
+  // 顶栏面包屑：由当前路由匹配侧栏导航推导「分区 · 当前页」，作为上下文 chrome。
+  const activeNav = navGroups
+    .flatMap((group) => group.items.map((item) => ({ ...item, group: group.label })))
+    .find((item) => (item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)));
 
   return (
     <div className="flex h-screen overflow-hidden bg-app text-foreground">
-      <aside className="hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex">
-        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-sidebar-border px-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
+      <aside
+        className={cn(
+          "hidden h-screen shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 lg:flex",
+          collapsed ? "w-16" : "w-60",
+        )}
+      >
+        <div
+          className={cn(
+            "flex h-14 shrink-0 items-center border-b border-sidebar-border",
+            collapsed ? "justify-center px-0" : "gap-2 px-4",
+          )}
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
             N
           </div>
-          <div>
-            <div className="text-sm font-semibold text-white">nice-ocr</div>
-            <div className="text-[11px] text-sidebar-muted">智能单据识别</div>
-          </div>
+          {!collapsed ? (
+            <div>
+              <div className="text-sm font-semibold text-white">nice-ocr</div>
+              <div className="text-[11px] text-sidebar-muted">智能单据识别</div>
+            </div>
+          ) : null}
         </div>
-        <nav className="space-y-5 px-3 py-4">
+        <nav className={cn("space-y-5 py-4", collapsed ? "px-2" : "px-3")}>
           {navGroups.map((group) => (
             <div key={group.label}>
-              <div className="mb-2 px-2 text-[11px] font-medium text-sidebar-muted">{group.label}</div>
+              {!collapsed ? (
+                <div className="mb-2 px-2 text-[11px] font-medium text-sidebar-muted">{group.label}</div>
+              ) : (
+                <div className="mb-2 h-px bg-sidebar-border" />
+              )}
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
@@ -100,15 +132,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       key={item.href}
                       href={item.href}
                       aria-current={active ? "page" : undefined}
+                      title={collapsed ? item.label : undefined}
                       className={cn(
-                        "flex h-9 items-center gap-2 rounded-md px-2 text-sm transition-colors",
+                        "flex h-9 items-center rounded-md text-sm transition-colors",
+                        collapsed ? "justify-center px-0" : "gap-2 px-2",
                         active
                           ? "bg-sidebar-hover text-white"
                           : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-white",
                       )}
                     >
                       <Icon size={16} />
-                      <span>{item.label}</span>
+                      {!collapsed ? <span>{item.label}</span> : null}
                     </Link>
                   );
                 })}
@@ -119,36 +153,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <select
-              className="h-9 max-w-56 rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-primary"
-              value=""
-              onChange={(event) => {
-                if (event.target.value) router.push(`/batches/${event.target.value}`);
-              }}
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+              title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+              className="hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:flex"
             >
-              <option value="">{batches.length ? "切换批次..." : "暂无批次"}</option>
-              {batches.map((batch) => (
-                <option key={batch.id} value={batch.id}>
-                  {batch.name}
-                </option>
-              ))}
-            </select>
-            <form
-              className="hidden h-9 w-72 items-center gap-2 rounded-md border border-border bg-muted px-3 text-sm md:flex"
-              onSubmit={(event) => {
-                event.preventDefault();
-                submitSearch();
-              }}
-            >
-              <Search size={15} className="text-muted-foreground" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜索产品名/编码，回车跳转结果"
-                className="h-full flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-              />
-            </form>
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
+            <nav aria-label="面包屑" className="flex min-w-0 items-center gap-2 text-sm">
+              {activeNav ? (
+              <>
+                <span className="shrink-0 text-muted-foreground">{activeNav.group}</span>
+                <span className="shrink-0 text-border">/</span>
+                <span className="truncate font-medium text-foreground">{activeNav.label}</span>
+              </>
+              ) : (
+                <span className="font-medium text-foreground">nice-ocr</span>
+              )}
+            </nav>
           </div>
           <div className="flex items-center gap-2">
             <div className="hidden items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground md:flex">

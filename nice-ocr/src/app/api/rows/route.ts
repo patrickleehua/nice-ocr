@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   const [rows, total] = await Promise.all([
     prisma.recognitionRow.findMany({
       where,
-      orderBy: { updatedAt: "desc" },
+      // 稳定排序：createdAt 不随编辑变化，编辑后行不会跳到列表顶部（避免页面抖动）。
+      orderBy: [{ createdAt: "desc" }, { rowIndex: "asc" }, { id: "asc" }],
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: { document: true, batch: true },
