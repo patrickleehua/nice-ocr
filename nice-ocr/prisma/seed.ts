@@ -76,7 +76,9 @@ async function main() {
         maxOutputTokens: 2000,
         metadataJson: JSON.stringify({ notes: "在设置页填入 API Key 后启用" }),
         models: [
-          { modelId: "claude-opus-4-6", displayName: "Claude Opus 4.6", priority: 10 },
+          { modelId: "claude-opus-4-8", displayName: "Claude Opus 4.8", priority: 10 },
+          { modelId: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6", priority: 20 },
+          { modelId: "claude-haiku-4-5", displayName: "Claude Haiku 4.5", priority: 30 },
         ],
       },
     ].map(({ models, ...provider }) =>
