@@ -35,7 +35,18 @@ export async function listJobs({ status, type, batchId, page, pageSize }: ListJo
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: {
-        document: { select: { id: true, originalName: true, status: true } },
+        document: {
+          select: {
+            id: true,
+            originalName: true,
+            status: true,
+            sourceType: true,
+            sourceFile: true,
+            sourceEntry: true,
+            pageNumber: true,
+            pageCount: true,
+          },
+        },
         batch: { select: { id: true, name: true } },
       },
     }),

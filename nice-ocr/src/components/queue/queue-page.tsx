@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { JobStatusBadge } from "@/components/ui/status";
+import { SourceBadge, type DocumentSource } from "@/components/ui/source-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -22,7 +23,7 @@ interface QueueJob {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
-  document: { id: string; originalName: string; status: string } | null;
+  document: ({ id: string; originalName: string; status: string } & DocumentSource) | null;
   batch: { id: string; name: string } | null;
 }
 
@@ -217,8 +218,13 @@ export function QueuePage() {
                       <span className="text-muted-foreground">-</span>
                     )}
                   </td>
-                  <td className={cn(tableCellClass, "max-w-[220px] truncate")} title={job.document?.originalName}>
-                    {job.document?.originalName ?? "-"}
+                  <td className={cn(tableCellClass, "max-w-[220px]")}>
+                    <div className="flex flex-col gap-1">
+                      <span className="truncate" title={job.document?.originalName}>
+                        {job.document?.originalName ?? "-"}
+                      </span>
+                      {job.document ? <SourceBadge source={job.document} compact /> : null}
+                    </div>
                   </td>
                   <td className={tableCellClass}>
                     <span className="tabular-nums">

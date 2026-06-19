@@ -7,8 +7,9 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { BatchStatusBadge, RiskBadge } from "@/components/ui/status";
+import { SourceBadge } from "@/components/ui/source-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import { apiGet, apiJson, apiUpload } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { BatchStatus, RiskLevel } from "@/lib/types";
@@ -20,6 +21,11 @@ interface ApiDoc {
   riskLevel: RiskLevel;
   storedPath: string;
   updatedAt: string;
+  sourceType: string;
+  sourceFile?: string | null;
+  sourceEntry?: string | null;
+  pageNumber?: number | null;
+  pageCount?: number | null;
 }
 
 interface BatchDetail {
@@ -117,6 +123,7 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
             <thead className={tableHeadClass}>
               <tr>
                 <th className={tableCellClass}>文件名</th>
+                <th className={tableCellClass}>来源</th>
                 <th className={tableCellClass}>状态</th>
                 <th className={tableCellClass}>风险</th>
                 <th className={tableCellClass}>更新时间</th>
@@ -132,6 +139,9 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                     onClick={() => setOverride(doc.id)}
                   >
                     <td className={tableCellClass}>{doc.originalName}</td>
+                    <td className={cn(tableCellClass, "max-w-[200px]")}>
+                      <SourceBadge source={doc} />
+                    </td>
                     <td className={tableCellClass}>{doc.status}</td>
                     <td className={tableCellClass}><RiskBadge risk={doc.riskLevel} /></td>
                     <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
@@ -157,8 +167,8 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                 ))
               ) : (
                 <tr>
-                  <td className={tableCellClass} colSpan={5}>
-                    <span className="text-muted-foreground">{isLoading ? "加载中..." : "暂无文档，请上传图片"}</span>
+                  <td className={tableCellClass} colSpan={6}>
+                    <span className="text-muted-foreground">{isLoading ? "加载中..." : "暂无文档，请上传文件"}</span>
                   </td>
                 </tr>
               )}
@@ -189,6 +199,19 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
             </div>
             {selected ? (
               <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div className="col-span-2">
+                  <dt className="text-xs text-muted-foreground">来源</dt>
+                  <dd className="mt-1"><SourceBadge source={selected} /></dd>
+                </div>
+                {selected.sourceFile ? (
+                  <div className="col-span-2">
+                    <dt className="text-xs text-muted-foreground">原始文件</dt>
+                    <dd className="mt-1 break-all">
+                      {selected.sourceFile}
+                      {selected.sourceEntry ? <span className="text-muted-foreground"> › {selected.sourceEntry}</span> : null}
+                    </dd>
+                  </div>
+                ) : null}
                 <div><dt className="text-xs text-muted-foreground">状态</dt><dd className="mt-1">{selected.status}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">风险等级</dt><dd className="mt-1"><RiskBadge risk={selected.riskLevel} /></dd></div>
                 <div><dt className="text-xs text-muted-foreground">更新时间</dt><dd className="mt-1">{formatDateTime(selected.updatedAt)}</dd></div>
