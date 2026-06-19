@@ -1,5 +1,6 @@
 import { PassThrough, Readable, type Writable } from "node:stream";
 import ExcelJS from "exceljs";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import type { DbClient } from "@/lib/db/types";
 import { getActiveScenarioId } from "@/lib/fields/active-scenario";
@@ -16,16 +17,54 @@ import {
 export const xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
+ * 选择性导出范围。字段语义与 rows 列表 API 的筛选完全一致（前后端同构），
+ * 缺省（全部为空）= 全库（仅排除已删除行），保持既有行为兼容。
+ * `rowIds` 为行级多选预留（下一期前端接入）。
+ */
+export interface ExportScope {
+  batchId?: string;
+  status?: string;
+  /** 风险等级 → riskLevel */
+  risk?: string;
+  auditState?: string;
+  /** 归一化月份 → normalizedMonth */
+  month?: string;
+  /** 商品编码（模糊） */
+  code?: string;
+  /** 商品名（模糊） */
+  name?: string;
+  /** 显式行 id 集合（行级多选）；存在时与其它条件取交集 */
+  rowIds?: string[];
+}
+
+/** 把导出范围翻成 Prisma where（镜像 rows API 的筛选语义）。 */
+export function scopeToWhere(scope?: ExportScope): Prisma.RecognitionRowWhereInput {
+  const s = scope ?? {};
+  return {
+    deletedAt: null,
+    ...(s.batchId ? { batchId: s.batchId } : {}),
+    ...(s.status ? { status: s.status } : {}),
+    ...(s.risk ? { riskLevel: s.risk } : {}),
+    ...(s.auditState ? { auditState: s.auditState } : {}),
+    ...(s.month ? { normalizedMonth: s.month } : {}),
+    ...(s.code ? { code: { contains: s.code } } : {}),
+    ...(s.name ? { name: { contains: s.name } } : {}),
+    ...(s.rowIds && s.rowIds.length ? { id: { in: s.rowIds } } : {}),
+  };
+}
+
+/**
  * 按选定模板导出识别结果 xlsx（buffer 版，含自适应列宽 + pivot 多 sheet）。
  * 渲染由统一入口 `renderWorkbook` 按 kind 分派：flat=单表平铺，pivot=目录+单产品透视。
  * pivot 需全量行在内存分组，故走 buffer 而非流式。
  */
 export async function buildRecognitionExport(
   templateId: string = DEFAULT_EXPORT_TEMPLATE_ID,
+  scope?: ExportScope,
   db: DbClient = prisma,
 ) {
   const rows = await db.recognitionRow.findMany({
-    where: { deletedAt: null },
+    where: scopeToWhere(scope),
     include: { document: true, batch: true },
     orderBy: [{ createdAt: "desc" }, { rowIndex: "asc" }],
   });
@@ -50,6 +89,7 @@ const EXPORT_PAGE_SIZE = 500;
  */
 export function streamRecognitionExport(
   templateId: string = DEFAULT_EXPORT_TEMPLATE_ID,
+  scope?: ExportScope,
   db: DbClient = prisma,
 ): { stream: ReadableStream<Uint8Array>; template: FlatExportTemplate } {
   const template = getExportTemplate(templateId);
@@ -59,13 +99,18 @@ export function streamRecognitionExport(
   }
   const passthrough = new PassThrough();
   // 后台流式写入；任一环节出错则销毁流（客户端收到中断的下载，而非静默截断）。
-  void writeStreamingWorkbook(passthrough, template, db).catch((error) => {
+  void writeStreamingWorkbook(passthrough, template, scope, db).catch((error) => {
     passthrough.destroy(error instanceof Error ? error : new Error(String(error)));
   });
   return { stream: Readable.toWeb(passthrough) as ReadableStream<Uint8Array>, template };
 }
 
-async function writeStreamingWorkbook(stream: Writable, template: FlatExportTemplate, db: DbClient) {
+async function writeStreamingWorkbook(
+  stream: Writable,
+  template: FlatExportTemplate,
+  scope: ExportScope | undefined,
+  db: DbClient,
+) {
   const scenarioId = await getActiveScenarioId();
   const columns = resolveTemplateColumns(template, scenarioId);
 
@@ -84,10 +129,11 @@ async function writeStreamingWorkbook(stream: Writable, template: FlatExportTemp
   headerRow.commit();
 
   // 游标分页：每次只取一页，避免一次性把所有行装入内存。
+  const where = scopeToWhere(scope);
   let cursor: string | undefined;
   for (;;) {
     const rows = await db.recognitionRow.findMany({
-      where: { deletedAt: null },
+      where,
       include: { document: true, batch: true },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: EXPORT_PAGE_SIZE,

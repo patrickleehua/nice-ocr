@@ -210,7 +210,14 @@ export function ResultsPage() {
           <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
             <RotateCcw size={15} />重建产品库
           </Button>
-          <ExportMenu />
+          <ExportMenu
+            scope={{
+              status: filters.status,
+              risk: filters.risk,
+              auditState: filters.audit,
+              name: filters.name,
+            }}
+          />
         </div>
       </div>
 

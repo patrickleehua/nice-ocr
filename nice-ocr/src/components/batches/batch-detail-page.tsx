@@ -9,6 +9,7 @@ import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { BatchStatusBadge, RiskBadge } from "@/components/ui/status";
 import { SourceBadge } from "@/components/ui/source-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
+import { ExportMenu } from "@/components/results/export-menu";
 import { cn, formatDateTime } from "@/lib/utils";
 import { apiGet, apiJson, apiUpload } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
@@ -100,9 +101,12 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
-            <UploadCloud size={15} />{uploadFiles.isPending ? "上传解析中..." : "上传文件"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <ExportMenu scope={{ batchId }} />
+            <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
+              <UploadCloud size={15} />{uploadFiles.isPending ? "上传解析中..." : "上传文件"}
+            </Button>
+          </div>
           {uploadFiles.isError ? (
             <span className="text-xs text-danger">{(uploadFiles.error as Error)?.message ?? "上传失败"}</span>
           ) : (

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { apiDownload, apiGet } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
+import type { ExportScope } from "@/lib/workflows/exports";
 
 interface ExportTemplateInfo {
   id: string;
@@ -13,11 +14,20 @@ interface ExportTemplateInfo {
   description: string;
 }
 
+/** 去掉空字符串/空数组字段，只保留生效的范围条件。 */
+function normalizeScope(scope?: ExportScope): ExportScope | undefined {
+  if (!scope) return undefined;
+  const entries = Object.entries(scope).filter(([, value]) =>
+    Array.isArray(value) ? value.length > 0 : Boolean(value),
+  );
+  return entries.length ? (Object.fromEntries(entries) as ExportScope) : undefined;
+}
+
 /**
- * 导出按钮。当前仅内置 v5 原版模板 → 直接导出；
- * 注册表新增模板（>1）后自动呈现模板选择下拉，无需改动调用方。
+ * 导出按钮。单模板时直接导出；注册表 >1 个模板时呈现模板选择下拉。
+ * `scope` 为选择性导出范围（按批次/当前筛选）；缺省=全库（兼容旧行为）。
  */
-export function ExportMenu() {
+export function ExportMenu({ scope }: { scope?: ExportScope } = {}) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -28,13 +38,18 @@ export function ExportMenu() {
   });
   const templates = data?.templates ?? [];
   const multiple = templates.length > 1;
+  const activeScope = normalizeScope(scope);
+  const scoped = Boolean(activeScope);
 
   const exportRows = useMutation({
     mutationFn: (templateId?: string) =>
       apiDownload(apiPaths.exportsRecognition, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(templateId ? { templateId } : {}),
+        body: JSON.stringify({
+          ...(templateId ? { templateId } : {}),
+          ...(activeScope ? { scope: activeScope } : {}),
+        }),
       }),
     onSettled: () => setOpen(false),
   });
@@ -81,6 +96,9 @@ export function ExportMenu() {
         >
           <div className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             选择导出模板
+          </div>
+          <div className="px-2 pb-1.5 text-xs text-muted-foreground">
+            {scoped ? "导出范围：当前筛选 / 批次" : "导出范围：全部结果"}
           </div>
           {templates.map((template) => (
             <button

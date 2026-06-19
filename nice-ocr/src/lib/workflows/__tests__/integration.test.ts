@@ -278,7 +278,7 @@ describe("workflow integration", () => {
 
       const rebuild = await rebuildProductLibrary({}, tx);
       const products = await tx.product.findMany({ include: { conflicts: true } });
-      const recognitionWorkbook = await readWorkbook(await buildRecognitionExport(undefined, tx));
+      const recognitionWorkbook = await readWorkbook(await buildRecognitionExport(undefined, undefined, tx));
       const productWorkbook = await readWorkbook(await buildProductExport(tx));
 
       assert.equal(rebuild.products, 2);
@@ -286,6 +286,13 @@ describe("workflow integration", () => {
       assert.equal(products.some((product) => product.name === "合计" && product.conflicts.length === 1), true);
       assert.equal(recognitionWorkbook.getWorksheet("识别结果")?.rowCount, 3);
       assert.equal(productWorkbook.getWorksheet("副食品资料库")?.rowCount, 3);
+
+      // 选择性导出（M2）：scope 下推 where，按 name 过滤只导出匹配行
+      const scopedByName = await readWorkbook(await buildRecognitionExport(undefined, { name: "苹果" }, tx));
+      assert.equal(scopedByName.getWorksheet("识别结果")?.rowCount, 2); // 表头 + 苹果 1 行
+      // 不存在的 batchId → 空结果（仅表头）
+      const scopedEmpty = await readWorkbook(await buildRecognitionExport(undefined, { batchId: "nonexistent" }, tx));
+      assert.equal(scopedEmpty.getWorksheet("识别结果")?.rowCount, 1);
     });
   });
 

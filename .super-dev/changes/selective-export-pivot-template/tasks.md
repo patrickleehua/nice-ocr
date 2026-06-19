@@ -17,13 +17,13 @@
 - [x] M1.7 单测：透视分组/月份降序/数量落格/评估列/sheet 名安全化；`v5-20260618` 列回归不变（50/50 通过）
 - [x] M1.8 运行时：写盘→exceljs 读回校验 sheet 数/合并标题/表头/月份格值/评估列 + 边界（空编码/超长名31字符/price=0排除）→ 通过
 
-## M2. 选择性导出（批次 + 当前筛选）
-- [ ] M2.1 `exports.ts`：`ExportScope` 类型 + `scopeToWhere(scope)`（复用 rows API 筛选语义），`buildRecognitionExport`/`streamRecognitionExport` 接 scope；缺省=全库（兼容）
-- [ ] M2.2 `POST /api/exports/recognition` body 扩展 `{ templateId?, scope? }`，Zod 校验
-- [ ] M2.3 `apiPaths` 无新增；`ExportMenu` 接 `scope` props（结果页传当前筛选；批次详情页传 batchId）
-- [ ] M2.4 结果页/批次详情页传入 scope，下拉提示"按当前筛选/本批次导出"
-- [ ] M2.5 单测：scopeToWhere 各字段 + rowIds 预留；运行时按筛选导出行数正确
-- [ ] （下一期）行级多选 checkbox 列 + `scope.rowIds`
+## M2. 选择性导出（批次 + 当前筛选）✅ 完成（2026-06-19）
+- [x] M2.1 `exports.ts`：`ExportScope` 类型 + `scopeToWhere(scope)`（镜像 rows API 筛选语义），`buildRecognitionExport`/`streamRecognitionExport` 接 scope；缺省=全库（兼容）
+- [x] M2.2 `POST /api/exports/recognition` body 扩展 `{ templateId?, scope? }`，Zod 校验
+- [x] M2.3 `ExportMenu` 接 `scope` props（结果页传当前筛选；批次详情页传 batchId）
+- [x] M2.4 结果页传当前筛选、批次详情页头部新增「按本批次导出」入口；下拉显示"导出范围：当前筛选/批次 vs 全部结果"
+- [x] M2.5 单测：scopeToWhere 各字段 + 空值忽略 + rowIds；DB 集成测试：按 name 过滤=1 行、不存在 batchId=空表
+- [ ] （下一期）行级多选 checkbox 列 + `scope.rowIds`（后端已就绪）
 
 ## M3. 批次绑定模板 + scenario 驱动抽取
 ### M3a 数据模型 + 创建 UI + 绑定
