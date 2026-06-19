@@ -121,7 +121,15 @@ class OpenAIResponsesProvider implements RecognitionProvider {
       },
     });
 
-    const parsed = response.output_parsed ?? extractionResultSchema.parse(JSON.parse(response.output_text || "{}"));
+    let parsed = response.output_parsed;
+    if (!parsed) {
+      const text = response.output_text?.trim();
+      // 无结构化结果且无可解析文本 → 显式报错，让 job 重试/失败并记录，不静默产出空结果。
+      if (!text) {
+        throw new Error(`OpenAI 识别未返回结构化结果（provider=${this.key}, model=${this.model}）`);
+      }
+      parsed = extractionResultSchema.parse(JSON.parse(text));
+    }
     return {
       extraction: normalizeExtraction(parsed),
       providerKey: this.key,
@@ -183,7 +191,11 @@ class AnthropicMessagesProvider implements RecognitionProvider {
         format: zodOutputFormat(extractionResultSchema),
       },
     });
-    const parsed = response.parsed_output ?? extractionResultSchema.parse({});
+    // 无结构化结果 → 显式报错，不再静默回退空 schema（否则会把空结果当成功落库）。
+    const parsed = response.parsed_output;
+    if (!parsed) {
+      throw new Error(`Anthropic 识别未返回结构化结果（provider=${this.key}, model=${this.model}）`);
+    }
     return {
       extraction: normalizeExtraction(parsed),
       providerKey: this.key,
