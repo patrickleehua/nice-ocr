@@ -11,13 +11,12 @@ import {
   FileImage,
   FileInput,
   LayoutDashboard,
+  ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   Table2,
-  Upload,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { apiGet } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
@@ -42,16 +41,12 @@ const navGroups = [
   {
     label: "系统",
     items: [
+      { href: "/queue", label: "队列", icon: ListChecks },
       { href: "/import", label: "导入", icon: FileInput },
       { href: "/settings", label: "设置", icon: Settings },
     ],
   },
 ];
-
-interface BatchOption {
-  id: string;
-  name: string;
-}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -73,18 +68,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }
 
-  const { data: batchData } = useQuery<{ batches: BatchOption[] }>({
-    queryKey: ["batches"],
-    queryFn: () => apiGet(apiPaths.batches),
-  });
   const { data: summary } = useQuery<{ metrics: { queued: number } }>({
     queryKey: ["dashboard"],
     queryFn: () => apiGet(apiPaths.dashboardSummary),
   });
 
-  const batches = batchData?.batches ?? [];
   const queued = summary?.metrics.queued ?? 0;
-  const activeBatchId = batches[0]?.id;
 
   // 顶栏面包屑：由当前路由匹配侧栏导航推导「分区 · 当前页」，作为上下文 chrome。
   const activeNav = navGroups
@@ -176,16 +165,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground md:flex">
+            <Link
+              href="/queue"
+              title="查看识别队列"
+              className="hidden items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground md:flex"
+            >
               <span className={cn("h-2 w-2 rounded-full", queued > 0 ? "bg-warning" : "bg-success")} />
               {queued > 0 ? `队列处理中 ${queued}` : "队列空闲"}
-            </div>
-            <Button size="sm" variant="primary" asChild>
-              <Link href={activeBatchId ? `/batches/${activeBatchId}` : "/batches"}>
-                <Upload size={15} />
-                上传图片
-              </Link>
-            </Button>
+            </Link>
           </div>
         </header>
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4">{children}</main>
