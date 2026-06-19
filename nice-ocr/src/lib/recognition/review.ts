@@ -92,8 +92,17 @@ function sameKey(a: ComparableRow, b: ComparableRow): boolean {
   return normalizeName(a.name) === normalizeName(b.name);
 }
 
+/**
+ * 商品名归一化：NFKC（全角→半角、兼容字形）+ 小写 + 去空白。
+ * 只做"真正等价"的归一，不做编辑距离/相似度匹配——consensus 会驱动自动通过，
+ * 放宽匹配会把"苹果"和"苹果汁"等不同品名误判一致而错误自动通过。
+ */
 function normalizeName(name: string): string {
-  return String(name ?? "").replace(/\s+/g, "").trim();
+  return String(name ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .trim();
 }
 
 function near(a: number, b: number, tolerance: number): boolean {
