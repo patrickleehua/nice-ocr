@@ -5,6 +5,10 @@
  */
 export const apiPaths = {
   dashboardSummary: "/api/dashboard/summary",
+  queue: "/api/queue",
+  queueRetry: (id: string) => `/api/queue/${id}/retry`,
+  queueCancel: (id: string) => `/api/queue/${id}/cancel`,
+  queueRetryFailed: "/api/queue/retry-failed",
   batches: "/api/batches",
   batch: (id: string) => `/api/batches/${id}`,
   batchUpload: (id: string) => `/api/batches/${id}/upload`,
