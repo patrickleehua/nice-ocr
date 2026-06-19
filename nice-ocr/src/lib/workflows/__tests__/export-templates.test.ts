@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import {
   DEFAULT_EXPORT_TEMPLATE_ID,
   exportCellValue,
+  extractPivotRows,
   getExportTemplate,
   listExportTemplates,
   resolveTemplateColumns,
@@ -162,5 +163,27 @@ describe("pivot 模板（采购统计表透视）", () => {
     assert.equal(sheet.getCell("D4").value, 30);
     // 评估列只在首行
     assert.equal(sheet.getCell("E4").value, null);
+  });
+
+  it("extractPivotRows 反向解析：写盘读回还原出行（追加/合并基础）", async () => {
+    const wb = await build();
+    const buffer = await wb.xlsx.writeBuffer();
+    const back = new ExcelJS.Workbook();
+    await back.xlsx.load(buffer as Parameters<typeof back.xlsx.load>[0]);
+    const recovered = extractPivotRows(back, template);
+
+    assert.equal(recovered.length, 3);
+    const potato = recovered.filter((row) => row.name === "土豆");
+    assert.equal(potato.length, 2);
+    assert.equal(potato[0].code, "100001");
+    assert.equal(potato[0].unit, "斤");
+    assert.deepEqual(potato.map((row) => row.qty).sort((a, b) => a - b), [20, 30]);
+    assert.deepEqual(potato.map((row) => row.normalizedMonth).sort(), ["2019年12月", "2020年1月"]);
+  });
+
+  it("extractPivotRows 对非采购统计表结构抛错", () => {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet("随便一张表");
+    assert.throws(() => extractPivotRows(wb, template), /不是有效/);
   });
 });

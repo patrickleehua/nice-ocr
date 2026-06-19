@@ -454,3 +454,92 @@ export function writePivotWorkbook(
   writeTocSheet(workbook, cfg, products);
   for (const product of products) writeProductSheet(workbook, cfg, product);
 }
+
+// ── 透视模板反向解析（追加/合并：读已有 xlsx → 还原成行 → 与新数据重渲染） ──────
+
+function cellText(value: ExcelJS.CellValue): string {
+  if (value == null) return "";
+  if (typeof value === "object") {
+    if ("richText" in value && Array.isArray(value.richText)) return value.richText.map((t) => t.text).join("");
+    if ("text" in value && value.text != null) return String(value.text);
+    if ("result" in value && value.result != null) return String(value.result);
+    return "";
+  }
+  return String(value);
+}
+
+function cellNumber(value: ExcelJS.CellValue): number | null {
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object" && "result" in value && typeof value.result === "number") return value.result;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+const MONTH_HEADER = /^\d{4}年\d{1,2}月$/;
+
+/** 构造一个仅含透视所需字段的来源行（其余必填字段用占位，渲染器不读）。 */
+function pivotSourceRow(code: string, name: string, unit: string, qty: number, month: string, remark: string): ExportSourceRow {
+  return {
+    batch: { name: "" },
+    document: { originalName: "" },
+    normalizedMonth: month,
+    code,
+    name,
+    unit,
+    qty,
+    price: 0,
+    amount: 0,
+    remark,
+    status: "",
+    riskLevel: "",
+  };
+}
+
+/**
+ * 把一个已有的「采购统计表」工作簿反向解析回行列表（用于追加/合并后整表重算重渲染）。
+ * 旧记录的数量/月份/产品/单位完整保留；单价不在透视表中存储，故还原为 0（评估列由重渲染按新数据重算）。
+ * 结构非法（无任何可识别的产品 sheet）时抛错，避免把不匹配的文件静默写坏。
+ */
+export function extractPivotRows(workbook: ExcelJS.Workbook, template: PivotExportTemplate): ExportSourceRow[] {
+  const cfg = template.pivot;
+  const suffix = cfg.titleSuffix;
+  const rows: ExportSourceRow[] = [];
+  let recognized = 0;
+
+  for (const sheet of workbook.worksheets) {
+    if (sheet.name === cfg.tocSheetName) continue;
+    // 表头行（R2）：col1=序号、col2=单位，其后为动态月份列，再后为评估列与备注。
+    const header = sheet.getRow(2);
+    if (cellText(header.getCell(1).value) !== cfg.seqLabel || cellText(header.getCell(2).value) !== cfg.unitLabel) {
+      continue; // 不是产品 sheet，跳过
+    }
+    recognized += 1;
+
+    const monthCols: Array<{ col: number; label: string }> = [];
+    let remarkCol = 0;
+    header.eachCell((cell, col) => {
+      const text = cellText(cell.value);
+      if (MONTH_HEADER.test(text)) monthCols.push({ col, label: text });
+      else if (text === cfg.remarkLabel) remarkCol = col;
+    });
+
+    const title = cellText(sheet.getRow(1).getCell(1).value);
+    const name = title.endsWith(suffix) ? title.slice(0, title.length - suffix.length) : sheet.name;
+    const code = sheet.name.endsWith(name) ? sheet.name.slice(0, sheet.name.length - name.length) : "";
+
+    for (let r = 3; r <= sheet.rowCount; r++) {
+      const dataRow = sheet.getRow(r);
+      const unit = cellText(dataRow.getCell(2).value);
+      const remark = remarkCol ? cellText(dataRow.getCell(remarkCol).value) : "";
+      for (const month of monthCols) {
+        const qty = cellNumber(dataRow.getCell(month.col).value);
+        if (qty != null) rows.push(pivotSourceRow(code, name, unit, qty, month.label, remark));
+      }
+    }
+  }
+
+  if (recognized === 0) {
+    throw new Error(`上传的文件不是有效的「${template.name}」（未找到任何产品工作表），无法追加`);
+  }
+  return rows;
+}

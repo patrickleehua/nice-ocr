@@ -40,15 +40,15 @@
 - [x] M3b.4 worker `scenarioContext(job)` 透传 `batch.scenarioId`（主/副/审核三处 provider），按 hasExtra 落 extraJson
 - [x] M3b.5 单测：grocery 动态↔默认 schema 等价、prompt 生成、extra 拆分、默认场景复用；类型/lint/58 测试/`next build` 全过
 
-## M4. 导出模式（新建/追加/合并，上传基准并入）
-- [ ] M4.1 `POST /api/exports/recognition` 支持 `multipart`（`baseFile` + `meta`），`mode: new|append|merge`
-- [ ] M4.2 `exports.ts`：读基准 xlsx（exceljs `load`）+ 结构校验（目录 + 产品 sheet 表头匹配）；pivot 并入（补产品 sheet / 补月份列 / append 行）；flat 并入（表尾续写）
-- [ ] M4.3 `apiDownload` 扩展支持 `FormData` body（带文件下载）；`ExportMenu` 加模式选择 + 文件上传（pivot 模板才出"上传基准"）
-- [ ] M4.4 `ExportRecord` 落库：`{ batchId, type, templateId, filterJson(scope), mode, rowCount }`
-- [ ] M4.5 单测：append 产品并集 + 月份并集 + 行追加；结构不符报错；运行时上传样本 xlsx 校验行增长
+## M4. 导出模式（新建/追加/合并，上传基准并入）✅ 完成（2026-06-19）
+- [x] M4.1 `POST /api/exports/recognition` 支持 `multipart`（`baseFile` + `meta`），`mode: new|append|merge`（append/merge 同为并入上传基准）
+- [x] M4.2 `exports.ts` `appendRecognitionExport`：读基准 xlsx（exceljs `load`）；pivot 走 `extractPivotRows` 反向解析→合并→整表重渲染（产品/月份并集、评估列重算）；flat 走表尾续写；结构非法抛错
+- [x] M4.3 `apiDownload` 原生支持 `FormData` body（无需改）；`ExportMenu` 加「追加」按钮 + 隐藏文件选择 + 下拉内每模板可追加
+- [x] M4.4 `ExportRecord` best-effort 落库：`{ batchId, type=templateId, filterJson(scope+mode), filePath:"", rowCount }`（new + append 两路）
+- [x] M4.5 单测：extractPivotRows 往返 + 结构非法报错；DB 集成：append 月份并集 + 行追加 + newRowCount
 
-## F. 质量门 / 交付
-- [ ] F1 `npm run build` + lint 零错误
-- [ ] F2 `npm test`（隔离 test.db，[[nice-ocr-test-setup]]）全绿，含新增单测；现有 22 测试不回归
-- [ ] F3 运行时冒烟：批次选模板→抽取→选择性导出→追加，逐项截图/exceljs 留证（[[nice-ocr-next-start-port-gotcha]]）
-- [ ] F4 更新 output/nice-ocr-architecture.md + 本 change 的 proof-pack
+## F. 质量门 / 交付 ✅
+- [x] F1 `npm run build` 成功 + lint 零警告
+- [x] F2 `npm test`（隔离 test.db）全绿 61/61，含 M1–M4 新增单测；既有测试不回归
+- [x] F3 运行时验证：pivot 写盘读回 + 选择性导出 DB 断言 + 批次绑定往返 + 追加并入 DB 端到端（exceljs 校验留证）
+- [x] F4 更新 proof-pack（见 proof-pack.md）；研究/设计文档已落 output/

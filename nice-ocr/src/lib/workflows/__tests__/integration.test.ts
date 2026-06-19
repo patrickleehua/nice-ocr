@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/client";
 import { enqueueRecognitionJob, enqueueSecondPassIfNeeded, claimNextJob } from "../../queue/jobs";
-import { buildProductExport, buildRecognitionExport } from "../exports";
+import { appendRecognitionExport, buildProductExport, buildRecognitionExport } from "../exports";
 import { getExportTemplate } from "../export-templates";
 import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
@@ -308,6 +308,34 @@ describe("workflow integration", () => {
       const read = await tx.batch.findUniqueOrThrow({ where: { id: batch.id } });
       assert.equal(read.exportTemplateId, "purchase-stats-20260619");
       assert.equal(read.scenarioId, "grocery");
+    });
+  });
+
+  it("追加导出把新数据并入上传基准（M4，pivot 重渲染）", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "append-test" } });
+      const doc = await tx.document.create({
+        data: { batchId: batch.id, originalName: "a.jpg", storedPath: "", hash: "ah", mimeType: "image/jpeg", sizeBytes: 0 },
+      });
+      await tx.recognitionRow.create({
+        data: { batchId: batch.id, documentId: doc.id, rowIndex: 1, normalizedMonth: "2020年1月", code: "100001", name: "土豆", unit: "斤", qty: 20, price: 4, amount: 80, status: "confirmed" },
+      });
+      // 基准文件：当前只有 1 行时先导出一份 pivot
+      const baseBuffer = await buildRecognitionExport("purchase-stats-20260619", { batchId: batch.id }, tx);
+      // 再新增一行（不同月份）
+      await tx.recognitionRow.create({
+        data: { batchId: batch.id, documentId: doc.id, rowIndex: 2, normalizedMonth: "2019年12月", code: "100001", name: "土豆", unit: "斤", qty: 30, price: 6, amount: 180, status: "confirmed" },
+      });
+      // 追加：把本批次（2 行）并入基准（含 1 行还原）→ 土豆 sheet 共 3 条数据行 + 月份并集
+      const { buffer, newRowCount } = await appendRecognitionExport("purchase-stats-20260619", { batchId: batch.id }, baseBuffer, tx);
+      assert.equal(newRowCount, 2);
+      const out = new ExcelJS.Workbook();
+      await out.xlsx.load(buffer as unknown as Parameters<typeof out.xlsx.load>[0]);
+      const sheet = out.getWorksheet("100001土豆")!;
+      assert.equal(sheet.rowCount, 5); // 标题 + 表头 + 3 数据行
+      // 表头含两个月份列（并集）
+      const headers = [3, 4].map((c) => sheet.getRow(2).getCell(c).value);
+      assert.deepEqual(headers, ["2020年1月", "2019年12月"]);
     });
   });
 

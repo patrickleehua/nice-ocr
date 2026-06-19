@@ -7,10 +7,12 @@ import { getActiveScenarioId } from "@/lib/fields/active-scenario";
 import {
   DEFAULT_EXPORT_TEMPLATE_ID,
   exportCellValue,
+  extractPivotRows,
   getExportTemplate,
   renderWorkbook,
   resolveTemplateColumns,
   type ExportSourceRow,
+  type ExportTemplate,
   type FlatExportTemplate,
 } from "@/lib/workflows/export-templates";
 
@@ -156,6 +158,83 @@ async function writeStreamingWorkbook(
 
   await sheet.commit();
   await workbook.commit();
+}
+
+/**
+ * 追加/合并导出：把作用域内的新数据并入一份已有的同模板 xlsx（上传基准，无状态）。
+ * - pivot：反向解析基准 → 与新行合并 → 整表重渲染（自动并集产品/月份，评估列按合并后数据重算）。
+ * - flat：复制基准工作簿，把新行续写到表尾（保留基准内容与样式）。
+ * 结构不符（pivot 无产品 sheet / flat 无工作表）时抛错，不静默写坏。
+ */
+export async function appendRecognitionExport(
+  templateId: string,
+  scope: ExportScope | undefined,
+  baseBuffer: Buffer,
+  db: DbClient = prisma,
+): Promise<{ buffer: Buffer; template: ExportTemplate; newRowCount: number }> {
+  const template = getExportTemplate(templateId);
+  const scenarioId = await getActiveScenarioId();
+  const newRows = (await db.recognitionRow.findMany({
+    where: scopeToWhere(scope),
+    include: { document: true, batch: true },
+    orderBy: [{ createdAt: "desc" }, { rowIndex: "asc" }],
+  })) as unknown as ExportSourceRow[];
+
+  const baseWorkbook = new ExcelJS.Workbook();
+  // @types/node 的 Buffer 泛型与 exceljs 声明存在细微差异（ArrayBufferLike vs ArrayBuffer），经 unknown 转换。
+  await baseWorkbook.xlsx.load(baseBuffer as unknown as Parameters<typeof baseWorkbook.xlsx.load>[0]);
+
+  if (template.kind === "pivot") {
+    const baseRows = extractPivotRows(baseWorkbook, template); // 结构非法时抛错
+    const output = new ExcelJS.Workbook();
+    renderWorkbook(output, template, [...baseRows, ...newRows], scenarioId);
+    return { buffer: Buffer.from(await output.xlsx.writeBuffer()), template, newRowCount: newRows.length };
+  }
+
+  appendFlatRows(baseWorkbook, template, newRows, scenarioId);
+  return { buffer: Buffer.from(await baseWorkbook.xlsx.writeBuffer()), template, newRowCount: newRows.length };
+}
+
+/** 把新行按模板列顺序续写到 flat 基准工作簿的表尾。 */
+function appendFlatRows(
+  workbook: ExcelJS.Workbook,
+  template: FlatExportTemplate,
+  rows: ExportSourceRow[],
+  scenarioId: string | null,
+) {
+  const columns = resolveTemplateColumns(template, scenarioId);
+  const sheet = workbook.getWorksheet(template.sheetName) ?? workbook.worksheets[0];
+  if (!sheet) throw new Error("上传的基准文件不含可追加的工作表");
+  for (const row of rows) {
+    const added = sheet.addRow(columns.map((field) => exportCellValue(row, field)));
+    columns.forEach((field, index) => {
+      if (field.numFmt) added.getCell(index + 1).numFmt = field.numFmt;
+      if (field.align === "right") added.getCell(index + 1).alignment = { horizontal: "right" };
+    });
+  }
+}
+
+/** 记录一次导出历史（best-effort，失败不影响导出本身）。 */
+export async function recordExportHistory(
+  templateId: string,
+  scope: ExportScope | undefined,
+  rowCount: number,
+  mode: "new" | "append",
+  db: DbClient = prisma,
+) {
+  try {
+    await db.exportRecord.create({
+      data: {
+        batchId: scope?.batchId ?? null,
+        type: templateId,
+        filterJson: JSON.stringify({ scope: scope ?? {}, mode }),
+        filePath: "",
+        rowCount,
+      },
+    });
+  } catch {
+    // 历史记录是审计增强，写失败不应阻断导出。
+  }
 }
 
 export async function buildProductExport(db: DbClient = prisma) {
