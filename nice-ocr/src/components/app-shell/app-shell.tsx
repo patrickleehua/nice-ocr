@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Boxes,
+  BookCheck,
   Database,
   FileImage,
   FileInput,
@@ -43,6 +44,7 @@ const navGroups = [
     items: [
       { href: "/queue", label: "队列", icon: ListChecks },
       { href: "/import", label: "导入", icon: FileInput },
+      { href: "/rules", label: "规则字典", icon: BookCheck },
       { href: "/settings", label: "设置", icon: Settings },
     ],
   },
