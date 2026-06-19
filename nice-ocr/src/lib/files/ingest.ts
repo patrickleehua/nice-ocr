@@ -99,9 +99,8 @@ function pdfAssetUrls(): PdfAssetUrls | undefined {
   return undefined;
 }
 
-/** 把 PDF 每页渲染为 PNG，每页一个图片条目。 */
-async function renderPdfPages(name: string, buffer: Buffer): Promise<IngestedImage[]> {
-  const pages: IngestedImage[] = [];
+/** 把 PDF 每页渲染为 PNG，逐页 yield（不在内存累积所有页）。 */
+async function* renderPdfPages(name: string, buffer: Buffer): AsyncGenerator<IngestedImage> {
   const doc = await pdf(new Uint8Array(buffer), {
     scale: PDF_RENDER_SCALE,
     docInitParams: pdfAssetUrls(),
@@ -109,49 +108,62 @@ async function renderPdfPages(name: string, buffer: Buffer): Promise<IngestedIma
   let index = 0;
   for await (const page of doc) {
     index += 1;
-    pages.push({
+    yield {
       name: `${stripExt(baseName(name))}-p${index}.png`,
       buffer: Buffer.from(page),
       mimeType: "image/png",
-    });
+    };
   }
-  return pages;
 }
 
 /**
- * 把一个上传文件展开为可识别图片列表：
+ * 把一个上传文件流式展开为可识别图片，逐个 yield：
  * - 图片：原样透传
- * - PDF：每页渲染成 PNG（每页一个条目）
+ * - PDF：每页渲染成 PNG（逐页 yield）
  * - ZIP：解压，对其中图片/PDF 处理（忽略目录、隐藏项、__MACOSX 及其它格式）
- * 不支持的单文件返回空数组，调用方据此提示。
+ * 调用方可边拿边持久化，峰值内存仅一张图——避免把整本 PDF / 整个 ZIP 的渲染结果一次性堆在内存。
+ * 不支持的单文件不产出任何条目，调用方据此提示。
  */
-export async function ingestUpload(
+export async function* ingestUploadStream(
   name: string,
   buffer: Buffer,
   mimeType?: string,
-): Promise<IngestedImage[]> {
+): AsyncGenerator<IngestedImage> {
   if (isZip(name, mimeType)) {
     const entries = unzipSync(new Uint8Array(buffer));
-    const result: IngestedImage[] = [];
     for (const [entryPath, data] of Object.entries(entries)) {
       if (entryPath.endsWith("/")) continue; // 目录项
       const base = baseName(entryPath);
       if (!base || base.startsWith(".") || entryPath.startsWith("__MACOSX")) continue;
       const buf = Buffer.from(data);
       if (isImage(base)) {
-        result.push({ name: base, buffer: buf, mimeType: imageMime(base) });
+        yield { name: base, buffer: buf, mimeType: imageMime(base) };
       } else if (isPdf(base)) {
-        result.push(...(await renderPdfPages(base, buf)));
+        yield* renderPdfPages(base, buf);
       }
     }
-    return result;
+    return;
   }
 
-  if (isPdf(name, mimeType)) return renderPdfPages(name, buffer);
+  if (isPdf(name, mimeType)) {
+    yield* renderPdfPages(name, buffer);
+    return;
+  }
 
   if (isImage(name, mimeType)) {
-    return [{ name, buffer, mimeType: mimeType?.startsWith("image/") ? mimeType : imageMime(name) }];
+    yield { name, buffer, mimeType: mimeType?.startsWith("image/") ? mimeType : imageMime(name) };
   }
+}
 
-  return [];
+/** 收集为数组的便捷封装（保留旧用法）。新代码优先用 ingestUploadStream 以控内存。 */
+export async function ingestUpload(
+  name: string,
+  buffer: Buffer,
+  mimeType?: string,
+): Promise<IngestedImage[]> {
+  const images: IngestedImage[] = [];
+  for await (const image of ingestUploadStream(name, buffer, mimeType)) {
+    images.push(image);
+  }
+  return images;
 }
