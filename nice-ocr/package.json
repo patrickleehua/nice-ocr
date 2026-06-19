@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "worker": "tsx scripts/worker.ts",
     "db:generate": "prisma generate",
     "db:backfill-provider-models": "tsx scripts/backfill-provider-models.ts",
