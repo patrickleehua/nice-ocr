@@ -146,6 +146,8 @@ model RecognitionRow {
   @@index([name])
   @@index([riskLevel])
   @@index([auditState])
+  // 审计历史基线(where status=confirmed, deletedAt=null)与 dashboard 已确认/待处理计数。
+  @@index([status, deletedAt])
 }
 
 model ProductObservation {
