@@ -25,6 +25,16 @@ export const AUDITED_ROW_FIELDS: readonly string[] = [
   "deletedAt",
 ];
 
+/** 产品审计关注的可变字段。 */
+export const AUDITED_PRODUCT_FIELDS: readonly string[] = [
+  "code",
+  "name",
+  "unit",
+  "aliasesJson",
+  "status",
+  "remark",
+];
+
 export interface FieldDiff {
   before: Record<string, unknown>;
   after: Record<string, unknown>;

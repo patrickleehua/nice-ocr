@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getActiveScenarioId, setActiveScenarioId } from "@/lib/fields/active-scenario";
 import { getMetaFields, getScenarioFields, listScenarios } from "@/lib/fields/field-schema";
+import { handleRoute, parseJson } from "@/lib/api/http";
 
 export const runtime = "nodejs";
 
@@ -15,13 +17,17 @@ export async function GET() {
   });
 }
 
+const scenarioSwitchSchema = z.object({ scenarioId: z.string().optional() });
+
 /** 切换活动场景。 */
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const scenarioId = await setActiveScenarioId(String(body?.scenarioId ?? ""));
-  return NextResponse.json({
-    activeScenarioId: scenarioId,
-    fields: getScenarioFields(scenarioId),
-    metaFields: getMetaFields(),
+  return handleRoute(async () => {
+    const body = await parseJson(request, scenarioSwitchSchema);
+    const scenarioId = await setActiveScenarioId(String(body.scenarioId ?? ""));
+    return NextResponse.json({
+      activeScenarioId: scenarioId,
+      fields: getScenarioFields(scenarioId),
+      metaFields: getMetaFields(),
+    });
   });
 }

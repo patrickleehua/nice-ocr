@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { importLegacyRecognitionRows, type LegacyRecognitionRow } from "@/lib/workflows/import-v5";
+import { badRequest, handleRoute } from "@/lib/api/http";
 
 export const runtime = "nodejs";
 
@@ -27,15 +28,22 @@ async function readJsonArray(formData: FormData, key: string) {
   const file = formData.get(key);
   if (!(file instanceof File)) return [];
   const text = decodeText(await file.arrayBuffer());
-  const parsed = JSON.parse(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw badRequest(`${key} 不是合法 JSON`);
+  }
   if (!Array.isArray(parsed)) {
-    throw new Error(`${key} must be a JSON array`);
+    throw badRequest(`${key} 必须是 JSON 数组`);
   }
   return parsed;
 }
 
 export async function POST(request: Request) {
-  const formData = await request.formData();
-  const rows = (await readJsonArray(formData, "recognitionResults")) as LegacyRecognitionRow[];
-  return NextResponse.json(await importLegacyRecognitionRows(rows));
+  return handleRoute(async () => {
+    const formData = await request.formData();
+    const rows = (await readJsonArray(formData, "recognitionResults")) as LegacyRecognitionRow[];
+    return NextResponse.json(await importLegacyRecognitionRows(rows));
+  });
 }
