@@ -26,6 +26,8 @@ export const apiPaths = {
   conflicts: "/api/conflicts",
   conflict: (id: string) => `/api/conflicts/${id}`,
   fields: "/api/fields",
+  rules: "/api/rules",
+  rule: (id: string) => `/api/rules/${id}`,
   exportsRecognition: "/api/exports/recognition",
   exportsTemplates: "/api/exports/templates",
   exportsProducts: "/api/exports/products",

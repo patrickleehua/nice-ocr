@@ -43,6 +43,13 @@ model Document {
   status          String              @default("uploaded")
   reviewStatus    String              @default("pending")
   tag             String?
+  // 上传来源溯源：sourceType=image|pdf|zip-image|zip-pdf；sourceFile=原始上传文件名；
+  // sourceEntry=ZIP 内条目路径；pageNumber/pageCount=PDF(或 zip 内 PDF)的页码/总页数。
+  sourceType      String              @default("image")
+  sourceFile      String?
+  sourceEntry     String?
+  pageNumber      Int?
+  pageCount       Int?
   riskLevel       String              @default("low")
   riskReasonsJson String              @default("[]")
   createdAt       DateTime            @default(now())
@@ -262,6 +269,26 @@ model AiProviderModel {
   @@unique([providerId, modelId])
   @@index([providerId, enabled, priority])
   @@index([source])
+}
+
+/// 规则字典：把分散在校验/冲突/审核/模型异常里的英文码，统一成可在后台编辑的中文释义。
+/// code 为稳定标识(与代码产生侧一致)；label/description/suggestion/severity 可被运营覆盖。
+/// builtin=true 表示由代码默认字典补齐，可「重置为默认」；enabled=false 时该原因在前端被视为不展示。
+model RuleCatalog {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  category    String   @default("validation")
+  label       String
+  description String   @default("")
+  suggestion  String   @default("")
+  severity    String   @default("medium")
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  builtin     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category, sortOrder])
 }
 
 model ExportRecord {

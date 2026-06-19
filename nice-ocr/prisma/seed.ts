@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "../src/lib/db/client";
 import { env } from "../src/lib/env";
+import { ensureRuleCatalogSeeded } from "../src/lib/rules/catalog";
 
 /** 生成一张 SVG 单据占位图，让审核台 / 批次详情的原图链路在种子数据下也能跑通。 */
 async function writeSeedReceipt(): Promise<string> {
@@ -142,7 +143,7 @@ async function main() {
   const rows = [
     ["A1001", "苹果", "kg", 10, 8.5, 85, "low", "[]"],
     ["A1002", "香蕉", "kg", 5, 6, 30, "medium", "[\"NAME_MULTI_UNIT\"]"],
-    ["B2001", "牛奶", "箱", 2, 45, 90, "medium", "[\"UNIT_DIFF\"]"],
+    ["B2001", "牛奶", "箱", 2, 45, 90, "medium", "[\"NAME_MULTI_UNIT\"]"],
     ["", "合计", "", 3, 68, 205, "high", "[\"INVALID_PRODUCT_NAME\",\"AMOUNT_MISMATCH\"]"],
   ] as const;
 
@@ -187,6 +188,9 @@ async function main() {
       reason: "疑似非商品名",
     },
   });
+
+  // 规则字典：补齐默认释义，确保新库开箱即可视化（不覆盖已有的运营编辑）。
+  await ensureRuleCatalogSeeded(prisma);
 }
 
 main()
