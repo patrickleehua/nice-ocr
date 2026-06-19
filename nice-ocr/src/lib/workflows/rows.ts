@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import type { DbClient } from "@/lib/db/types";
+import { AUDITED_ROW_FIELDS, diffFields } from "@/lib/audit-log";
 import { validateRow } from "@/lib/validation/rules";
 
 export type ConfirmSelector = {
@@ -107,13 +108,15 @@ export async function updateRecognitionRow(
     },
   });
 
+  const diff = diffFields(before, row, AUDITED_ROW_FIELDS);
   await db.auditLog.create({
     data: {
       entityType: "RecognitionRow",
       entityId: id,
       action: "update",
-      beforeJson: JSON.stringify(before),
-      afterJson: JSON.stringify(row),
+      // 仅记录发生变化的字段的旧/新值（字段级 diff），避免整行噪声膨胀。
+      beforeJson: JSON.stringify(diff.before),
+      afterJson: JSON.stringify(diff.after),
     },
   });
 
@@ -134,13 +137,14 @@ export async function excludeRecognitionRow(id: string, db: DbClient = prisma) {
     data: { deletedAt: new Date(), status: "excluded" },
   });
 
+  const diff = diffFields(before, row, AUDITED_ROW_FIELDS);
   await db.auditLog.create({
     data: {
       entityType: "RecognitionRow",
       entityId: id,
       action: "exclude",
-      beforeJson: JSON.stringify(before),
-      afterJson: JSON.stringify(row),
+      beforeJson: JSON.stringify(diff.before),
+      afterJson: JSON.stringify(diff.after),
     },
   });
 
