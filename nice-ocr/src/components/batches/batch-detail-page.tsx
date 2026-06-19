@@ -34,6 +34,8 @@ interface BatchDetail {
     id: string;
     name: string;
     status: string;
+    exportTemplateId?: string | null;
+    scenarioId?: string | null;
     documents: ApiDoc[];
     _count: { documents: number; rows: number };
   };
@@ -102,7 +104,7 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
         </div>
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
-            <ExportMenu scope={{ batchId }} />
+            <ExportMenu scope={{ batchId }} defaultTemplateId={batch?.exportTemplateId} />
             <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
               <UploadCloud size={15} />{uploadFiles.isPending ? "上传解析中..." : "上传文件"}
             </Button>

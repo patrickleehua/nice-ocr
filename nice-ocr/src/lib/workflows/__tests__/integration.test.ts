@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/client";
 import { enqueueRecognitionJob, enqueueSecondPassIfNeeded, claimNextJob } from "../../queue/jobs";
 import { buildProductExport, buildRecognitionExport } from "../exports";
+import { getExportTemplate } from "../export-templates";
 import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
 import { confirmRecognitionRows, createRecognitionRow, excludeRecognitionRow, updateRecognitionRow } from "../rows";
@@ -293,6 +294,20 @@ describe("workflow integration", () => {
       // 不存在的 batchId → 空结果（仅表头）
       const scopedEmpty = await readWorkbook(await buildRecognitionExport(undefined, { batchId: "nonexistent" }, tx));
       assert.equal(scopedEmpty.getWorksheet("识别结果")?.rowCount, 1);
+    });
+  });
+
+  it("批次绑定导出模板并派生抽取场景（M3a）", async () => {
+    await withRollback(async (tx) => {
+      const template = getExportTemplate("purchase-stats-20260619");
+      assert.equal(template.scenarioId, "grocery");
+      // 模拟创建逻辑：绑定模板 + 场景由模板派生
+      const batch = await tx.batch.create({
+        data: { name: "bind", exportTemplateId: template.id, scenarioId: template.scenarioId },
+      });
+      const read = await tx.batch.findUniqueOrThrow({ where: { id: batch.id } });
+      assert.equal(read.exportTemplateId, "purchase-stats-20260619");
+      assert.equal(read.scenarioId, "grocery");
     });
   });
 

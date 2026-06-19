@@ -17,6 +17,8 @@ model Batch {
   primaryModelId       String?
   secondaryProviderKey String?
   secondaryModelId     String?
+  exportTemplateId     String?
+  scenarioId           String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
   documents            Document[]

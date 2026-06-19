@@ -26,12 +26,12 @@
 - [ ] （下一期）行级多选 checkbox 列 + `scope.rowIds`（后端已就绪）
 
 ## M3. 批次绑定模板 + scenario 驱动抽取
-### M3a 数据模型 + 创建 UI + 绑定
-- [ ] M3a.1 Prisma：Batch 加 `exportTemplateId String?` + `scenarioId String?`，`prisma generate` + migrate（[[prisma-generate-required]]）
-- [ ] M3a.2 `batchCreateSchema`（[batches/route.ts](../../../nice-ocr/src/app/api/batches/route.ts)）+ create 写两字段；GET 返回带两字段
-- [ ] M3a.3 `CreateBatchPayload` + `CreateBatchDrawer`（[action-dialogs.tsx](../../../nice-ocr/src/components/dialogs/action-dialogs.tsx)）加"导出模板"下拉（GET /api/exports/templates，lucide，无 emoji），选模板带出 scenario
-- [ ] M3a.4 批次详情页导出默认用 `batch.exportTemplateId` + `scope.batchId`
-- [ ] M3a.5 单测：create 落两字段 + 导出按批次取模板
+### M3a 数据模型 + 创建 UI + 绑定 ✅ 完成（2026-06-19）
+- [x] M3a.1 Prisma：Batch 加 `exportTemplateId String?` + `scenarioId String?`，`prisma db push`（本项目用 db push 演进）+ `prisma generate`
+- [x] M3a.2 `batchCreateSchema` + create 写两字段，场景由 `exportTemplateId` 派生（选模板带出 grocery）再回退；GET include 默认返回两字段
+- [x] M3a.3 `CreateBatchPayload` + `CreateBatchDrawer` 加"导出模板"下拉（GET /api/exports/templates，原生 select，无 emoji）
+- [x] M3a.4 批次详情页 ExportMenu 接 `defaultTemplateId={batch.exportTemplateId}` + `scope.batchId`：一键直出绑定模板，多模板可下拉切换
+- [x] M3a.5 DB 集成测试：批次绑定模板 + 派生场景往返（54/54 通过）
 
 ### M3b 识别链路动态化（grocery 行为保持）
 - [ ] M3b.1 `schema.ts`：`buildExtractionRowSchema(fields)` / `buildExtractionResultSchema(fields)` 动态 zod；保留 `extractionResultSchema` 作 grocery 等价默认

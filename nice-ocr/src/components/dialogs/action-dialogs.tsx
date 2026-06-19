@@ -1,12 +1,21 @@
 "use client";
 
 import { AlertTriangle, Check, Plus, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { severityLabel, severityTone } from "@/components/ui/reason-badge";
 import { useRuleMap } from "@/lib/rules/use-rule-catalog";
+import { apiGet } from "@/lib/api/client";
+import { apiPaths } from "@/lib/api/paths";
 import type { RecognitionRow } from "@/lib/types";
+
+interface ExportTemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+}
 
 export interface BatchModelOptionProvider {
   providerKey: string;
@@ -28,6 +37,8 @@ export interface CreateBatchPayload {
   primaryModelId: string | null;
   secondaryProviderKey: string | null;
   secondaryModelId: string | null;
+  /** 绑定的导出模板 id；选模板后抽取与导出都走该模板（场景由后端按模板派生）。 */
+  exportTemplateId: string | null;
 }
 
 export function DrawerShell({
@@ -70,6 +81,13 @@ export function CreateBatchDrawer({
   defaultApprovalMode?: string;
   providers?: BatchModelOptionProvider[];
 }) {
+  const { data: templateData } = useQuery<{ templates: ExportTemplateInfo[] }>({
+    queryKey: ["export-templates"],
+    queryFn: () => apiGet(apiPaths.exportsTemplates),
+    staleTime: 10 * 60 * 1000,
+    enabled: open,
+  });
+  const templates = templateData?.templates ?? [];
   return (
     <DrawerShell title="创建批次" open={open} onClose={onClose}>
       <form
@@ -84,6 +102,7 @@ export function CreateBatchDrawer({
             approvalMode: String(form.get("approvalMode") ?? "hybrid"),
             ...parseProviderModelSelection(String(form.get("primaryTarget") ?? "")),
             ...parseSecondaryProviderModelSelection(String(form.get("secondaryTarget") ?? "")),
+            exportTemplateId: String(form.get("exportTemplateId") ?? "") || null,
           });
         }}
       >
@@ -121,6 +140,20 @@ export function CreateBatchDrawer({
             <option value="">继承全局默认</option>
             {renderModelOptions(providers)}
           </select>
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted-foreground">导出模板</span>
+          <select name="exportTemplateId" defaultValue="" className="h-9 w-full rounded-md border border-border bg-surface px-3">
+            <option value="">不绑定（导出时再选）</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            绑定后，本批次的抽取与导出都按该模板的内容进行。
+          </span>
         </label>
         <label className="block text-sm">
           <span className="mb-1 block text-muted-foreground">备注</span>

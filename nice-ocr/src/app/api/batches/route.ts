@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { getRecognitionSettings } from "@/lib/recognition/settings";
 import { normalizeApprovalMode } from "@/lib/recognition/review";
+import { getExportTemplate } from "@/lib/workflows/export-templates";
 import { handleRoute, parseJson } from "@/lib/api/http";
 
 export const runtime = "nodejs";
@@ -42,6 +43,10 @@ const batchCreateSchema = z.object({
   primaryModelId: z.string().nullish(),
   secondaryProviderKey: z.string().nullish(),
   secondaryModelId: z.string().nullish(),
+  /** 绑定导出模板；选模板时自动带出其声明的抽取场景 */
+  exportTemplateId: z.string().nullish(),
+  /** 抽取场景；缺省由 exportTemplateId 派生，再回退全局活动场景 */
+  scenarioId: z.string().nullish(),
 });
 
 export async function POST(request: Request) {
@@ -56,6 +61,10 @@ export async function POST(request: Request) {
       const normalized = value == null ? "" : String(value).trim();
       return normalized ? normalized : fallback;
     };
+    // 绑定导出模板；场景优先取显式值，否则由模板声明派生（选模板即带出场景），再回退全局。
+    const exportTemplateId = body.exportTemplateId ? String(body.exportTemplateId).trim() || null : null;
+    const derivedScenarioId = exportTemplateId ? getExportTemplate(exportTemplateId).scenarioId ?? null : null;
+    const scenarioId = body.scenarioId ? String(body.scenarioId).trim() || null : derivedScenarioId;
     const batch = await prisma.batch.create({
       data: {
         name: String(body.name ?? "未命名批次"),
@@ -66,6 +75,8 @@ export async function POST(request: Request) {
         primaryModelId: pickKey(body.primaryModelId, defaults.primaryModelId),
         secondaryProviderKey: pickKey(body.secondaryProviderKey, defaults.secondaryProviderKey),
         secondaryModelId: pickKey(body.secondaryModelId, defaults.secondaryModelId),
+        exportTemplateId,
+        scenarioId,
         status: "draft",
       },
     });
