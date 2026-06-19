@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, Clock, FileImage, RefreshCw, Table2 } from
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { RiskBadge } from "@/components/ui/status";
+import { ReasonBadge, ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { formatDateTime, formatNumber } from "@/lib/utils";
@@ -26,7 +27,14 @@ interface DashboardSummary {
     flaggedRows: number;
   };
   activeBatch: { id: string; name: string; status: string; documents: number; rows: number } | null;
-  recentFailures: Array<{ id: string; fileName: string; risk: RiskLevel; reason: string; updatedAt: string }>;
+  recentFailures: Array<{
+    id: string;
+    fileName: string;
+    risk: RiskLevel;
+    reasons: string[];
+    reasonFallback: string;
+    updatedAt: string;
+  }>;
   topRisks: Array<{ type: string; reason: string; severity: RiskLevel; count: number }>;
 }
 
@@ -138,7 +146,7 @@ export function DashboardPage() {
               data.topRisks.map((risk) => (
                 <div key={risk.type} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div>
-                    <div className="text-sm font-medium">{risk.type}</div>
+                    <ReasonBadge code={risk.type} />
                     <div className="mt-1 text-xs text-muted-foreground">{risk.reason}</div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -174,7 +182,9 @@ export function DashboardPage() {
                 <tr key={doc.id} className="hover:bg-muted/70">
                   <td className={tableCellClass}>{doc.fileName}</td>
                   <td className={tableCellClass}><RiskBadge risk={doc.risk} /></td>
-                  <td className={tableCellClass}>{doc.reason}</td>
+                  <td className={tableCellClass}>
+                    <ReasonList codes={doc.reasons} emptyText={doc.reasonFallback} />
+                  </td>
                   <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
                   <td className={tableCellClass}>
                     <Button

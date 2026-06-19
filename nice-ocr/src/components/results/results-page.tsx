@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AuditStateBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
+import { ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { FieldCell } from "@/components/ui/field-cell";
 import { ExportMenu } from "@/components/results/export-menu";
@@ -80,6 +81,7 @@ function toRecognitionRow(row: ApiRecognitionRow): RecognitionRow {
     reviewClass: row.reviewClass ?? "pending_review",
     auditState: row.auditState ?? "none",
     auditNote: row.auditNote ?? undefined,
+    riskReasons: reasons,
     conflictReason: reasons.length ? reasons.join("、") : undefined,
     remark: row.remark ?? "",
     extra: safeParseObject(row.extraJson),
@@ -305,7 +307,7 @@ export function ResultsPage() {
                       <AuditStateBadge value={row.auditState ?? "none"} />
                     </span>
                   </td>
-                  <td className={tableCellClass}>{row.conflictReason ?? "-"}</td>
+                  <td className={tableCellClass}><ReasonList codes={row.riskReasons ?? []} emptyText="-" /></td>
                   <td className={tableCellClass}>
                     <div className="flex gap-1">
                       <Button

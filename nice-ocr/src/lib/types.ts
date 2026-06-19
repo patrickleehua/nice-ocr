@@ -67,6 +67,9 @@ export interface RecognitionRow {
   reviewClass: string;
   auditState?: string;
   auditNote?: string;
+  /** 命中的风险/冲突原因码（经规则字典翻成中文释义渲染）。 */
+  riskReasons?: string[];
+  /** @deprecated 用 riskReasons 经字典渲染；保留兼容旧展示。 */
   conflictReason?: string;
   remark?: string;
   /** 场景声明的非核心字段（来自 RecognitionRow.extraJson） */

@@ -97,7 +97,9 @@ export async function GET() {
       id: doc.id,
       fileName: doc.originalName,
       risk: doc.riskLevel,
-      reason: parseReasons(doc.riskReasonsJson).join("、") || (doc.status === "failed" ? "识别失败" : "需要人工复核"),
+      // 返回原因码数组交前端经规则字典渲染；无原因码时给出兜底文案。
+      reasons: parseReasons(doc.riskReasonsJson),
+      reasonFallback: doc.status === "failed" ? "识别失败" : "需要人工复核",
       updatedAt: doc.updatedAt,
     })),
     topRisks: Array.from(riskByType.values()).slice(0, 6),

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { ApprovalModeBadge, AuditStateBadge, ReviewClassBadge, RowStatusBadge, RiskBadge } from "@/components/ui/status";
+import { ModelErrorNote, ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { FieldCell } from "@/components/ui/field-cell";
 import { ImageViewer } from "@/components/ui/image-viewer";
@@ -305,7 +306,7 @@ export function ReviewPage() {
               <button
                 type="button"
                 onClick={() => setRiskOpen(true)}
-                title={riskReasons.length ? riskReasons.join("、") : "查看风险说明"}
+                title="查看风险详情"
                 className="shrink-0"
               >
                 <RiskBadge risk={document.riskLevel} />
@@ -670,7 +671,7 @@ export function ReviewPage() {
                         策略 {attempt.strategy} · {formatDateTime(attempt.completedAt ?? attempt.startedAt)}
                       </div>
                     </div>
-                    <span className="text-xs text-muted-foreground">{attempt.error ?? attempt.status}</span>
+                    <ModelErrorNote error={attempt.error} status={attempt.status} />
                   </div>
                 ))
               ) : (
@@ -685,7 +686,10 @@ export function ReviewPage() {
               {document ? <RiskBadge risk={document.riskLevel} /> : null}
             </PanelHeader>
             <div className="space-y-2 p-4 text-sm">
-              <div>风险原因：{riskReasons.length ? riskReasons.join("、") : "无"}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="shrink-0">风险原因：</span>
+                <ReasonList codes={riskReasons} />
+              </div>
               <div className="text-muted-foreground">建议：核对原图与识别明细，点击单元格修正后逐行确认。</div>
               <Button size="sm" variant="primary" onClick={() => setRiskOpen(true)}>查看风险说明</Button>
             </div>
@@ -694,7 +698,7 @@ export function ReviewPage() {
           ) : null}
         </div>
       </div>
-      <RiskDetailDrawer open={riskOpen} onClose={() => setRiskOpen(false)} />
+      <RiskDetailDrawer open={riskOpen} onClose={() => setRiskOpen(false)} reasons={riskReasons} />
     </div>
   );
 }

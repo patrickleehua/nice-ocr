@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RiskBadge } from "@/components/ui/status";
+import { ReasonBadge } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
 import { apiGet, apiJson } from "@/lib/api/client";
@@ -100,7 +101,7 @@ export function ConflictsPage() {
                 const badge = statusBadge[conflict.status];
                 return (
                   <tr key={conflict.id} className="hover:bg-muted/70">
-                    <td className={tableCellClass}>{conflict.type}</td>
+                    <td className={tableCellClass}><ReasonBadge code={conflict.type} /></td>
                     <td className={tableCellClass}><RiskBadge risk={conflict.severity} /></td>
                     <td className={tableCellClass}>{conflict.product?.name ?? conflict.product?.code ?? "-"}</td>
                     <td className={tableCellClass}>{conflict.reason}</td>

@@ -2,7 +2,10 @@
 
 import { AlertTriangle, Check, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
+import { severityLabel, severityTone } from "@/components/ui/reason-badge";
+import { useRuleMap } from "@/lib/rules/use-rule-catalog";
 import type { RecognitionRow } from "@/lib/types";
 
 export interface BatchModelOptionProvider {
@@ -221,20 +224,54 @@ export function EditRowDrawer({
 export function RiskDetailDrawer({
   open,
   onClose,
+  reasons = [],
 }: {
   open: boolean;
   onClose: () => void;
+  /** 当前单据/行命中的原因码，逐条经规则字典翻成中文释义与处理建议。 */
+  reasons?: string[];
 }) {
+  const { map } = useRuleMap();
+  // 过滤被后台停用的规则（视为非问题）。
+  const active = reasons.filter((code) => map.get(code)?.enabled !== false);
   return (
     <DrawerShell title="风险详情" open={open} onClose={onClose}>
       <Panel>
         <PanelHeader>
-          <PanelTitle>风险解释</PanelTitle>
+          <PanelTitle>命中的规则</PanelTitle>
           <AlertTriangle className="text-danger-strong" size={18} />
         </PanelHeader>
         <div className="space-y-3 p-4 text-sm">
-          <div>系统会综合商品名规则、金额校验、产品库冲突和多次识别差异给出风险等级。</div>
-          <div className="rounded-md bg-danger-soft p-3 text-danger-strong">高风险行不会被自动确认，需要人工审核。</div>
+          {active.length ? (
+            active.map((code) => {
+              const entry = map.get(code);
+              const tone = entry ? severityTone[entry.severity] : "neutral";
+              return (
+                <div key={code} className="rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{entry?.label ?? code}</span>
+                    <Badge tone={tone}>{entry ? `${severityLabel[entry.severity]}风险` : "未登记"}</Badge>
+                  </div>
+                  {entry?.description ? (
+                    <p className="mt-1.5 text-muted-foreground">{entry.description}</p>
+                  ) : (
+                    <p className="mt-1.5 text-muted-foreground">该原因码（{code}）尚未在规则字典登记。</p>
+                  )}
+                  {entry?.suggestion ? (
+                    <p className="mt-1.5 text-foreground">
+                      <span className="text-muted-foreground">处理建议：</span>
+                      {entry.suggestion}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })
+          ) : (
+            <div className="rounded-md bg-success-soft p-3 text-success-strong">该单据未命中任何风险规则。</div>
+          )}
+          <div className="rounded-md bg-muted p-3 text-muted-foreground">
+            规则释义可在「系统 · 规则字典」中维护。高风险行不会被自动确认，需要人工审核。
+          </div>
         </div>
       </Panel>
     </DrawerShell>
