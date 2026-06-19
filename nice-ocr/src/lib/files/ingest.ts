@@ -8,11 +8,32 @@ import { pdf } from "pdf-to-img";
  * 上传文件解析：把图片 / PDF / ZIP 统一展开为「可识别图片」列表。
  * 下游（存储 / Document / 识别 / 预览）一律按图片处理，无需感知原始格式。
  */
+/** 展开后图片的来源类别。 */
+export type IngestSourceKind = "image" | "pdf" | "zip-image" | "zip-pdf";
+
+/**
+ * 来源溯源元数据：随每张展开图片一路带到 Document，供前端"前缀标识 + 看具体来源"。
+ * 结构化承载，绝不靠文件名反推。
+ */
+export interface IngestSource {
+  kind: IngestSourceKind;
+  /** 顶层上传文件名（发票.pdf / 档案.zip / 单张.jpg）。 */
+  uploadName: string;
+  /** ZIP 内条目路径（zip-image / zip-pdf 才有）。 */
+  entryPath?: string;
+  /** PDF / zip 内 PDF 的 1-based 页码。 */
+  pageNumber?: number;
+  /** 该 PDF 的总页数。 */
+  pageCount?: number;
+}
+
 export interface IngestedImage {
   /** 展开后的文件名（用于 Document.originalName 与存储扩展名） */
   name: string;
   buffer: Buffer;
   mimeType: string;
+  /** 来源溯源。 */
+  source: IngestSource;
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
@@ -99,19 +120,29 @@ function pdfAssetUrls(): PdfAssetUrls | undefined {
   return undefined;
 }
 
-/** 把 PDF 每页渲染为 PNG，逐页 yield（不在内存累积所有页）。 */
-async function* renderPdfPages(name: string, buffer: Buffer): AsyncGenerator<IngestedImage> {
+/**
+ * 把 PDF 每页渲染为 PNG，逐页 yield（不在内存累积所有页）。
+ * `displayName` 用于派生页文件名；`source` 是这份 PDF 的基础来源（pdf / zip-pdf），
+ * 每页在其上补 pageNumber/pageCount。总页数取 pdf-to-img 的 `Pdf.length`。
+ */
+async function* renderPdfPages(
+  displayName: string,
+  buffer: Buffer,
+  source: { kind: "pdf" | "zip-pdf"; uploadName: string; entryPath?: string },
+): AsyncGenerator<IngestedImage> {
   const doc = await pdf(new Uint8Array(buffer), {
     scale: PDF_RENDER_SCALE,
     docInitParams: pdfAssetUrls(),
   });
+  const pageCount = doc.length;
   let index = 0;
   for await (const page of doc) {
     index += 1;
     yield {
-      name: `${stripExt(baseName(name))}-p${index}.png`,
+      name: `${stripExt(baseName(displayName))}-p${index}.png`,
       buffer: Buffer.from(page),
       mimeType: "image/png",
+      source: { ...source, pageNumber: index, pageCount },
     };
   }
 }
@@ -137,21 +168,32 @@ export async function* ingestUploadStream(
       if (!base || base.startsWith(".") || entryPath.startsWith("__MACOSX")) continue;
       const buf = Buffer.from(data);
       if (isImage(base)) {
-        yield { name: base, buffer: buf, mimeType: imageMime(base) };
+        yield {
+          name: base,
+          buffer: buf,
+          mimeType: imageMime(base),
+          source: { kind: "zip-image", uploadName: name, entryPath },
+        };
       } else if (isPdf(base)) {
-        yield* renderPdfPages(base, buf);
+        // ZIP 内嵌 PDF：保留压缩包名 + 内部条目路径 + 页码。
+        yield* renderPdfPages(base, buf, { kind: "zip-pdf", uploadName: name, entryPath });
       }
     }
     return;
   }
 
   if (isPdf(name, mimeType)) {
-    yield* renderPdfPages(name, buffer);
+    yield* renderPdfPages(name, buffer, { kind: "pdf", uploadName: name });
     return;
   }
 
   if (isImage(name, mimeType)) {
-    yield { name, buffer, mimeType: mimeType?.startsWith("image/") ? mimeType : imageMime(name) };
+    yield {
+      name,
+      buffer,
+      mimeType: mimeType?.startsWith("image/") ? mimeType : imageMime(name),
+      source: { kind: "image", uploadName: name },
+    };
   }
 }
 

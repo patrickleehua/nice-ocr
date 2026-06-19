@@ -39,6 +39,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             mimeType: image.mimeType || "image/png",
             sizeBytes: image.buffer.byteLength,
             status: "queued",
+            // 来源溯源：结构化落库，供前端来源徽章与"看具体来源"。
+            sourceType: image.source.kind,
+            sourceFile: image.source.uploadName,
+            sourceEntry: image.source.entryPath ?? null,
+            pageNumber: image.source.pageNumber ?? null,
+            pageCount: image.source.pageCount ?? null,
           },
         });
         await enqueueRecognitionJob(document.id, batchId);
