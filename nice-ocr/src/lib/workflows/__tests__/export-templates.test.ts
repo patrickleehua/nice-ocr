@@ -1,14 +1,31 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import ExcelJS from "exceljs";
 import {
   DEFAULT_EXPORT_TEMPLATE_ID,
   exportCellValue,
   getExportTemplate,
   listExportTemplates,
   resolveTemplateColumns,
+  writePivotWorkbook,
   type ExportSourceRow,
+  type PivotExportTemplate,
 } from "../export-templates";
 import type { FieldDef } from "@/lib/fields/field-schema";
+
+function mkRow(partial: Partial<ExportSourceRow>): ExportSourceRow {
+  return {
+    batch: { name: "B1" },
+    document: { originalName: "doc.jpg" },
+    name: "",
+    qty: 0,
+    price: 0,
+    amount: 0,
+    status: "confirmed",
+    riskLevel: "low",
+    ...partial,
+  };
+}
 
 /** v5 原版导出的 14 列（顺序固定）。 */
 const V5_HEADERS = [
@@ -29,11 +46,14 @@ const V5_HEADERS = [
 ];
 
 describe("export templates", () => {
-  it("默认模板为 v5-20260618，且仅内置该模板", () => {
+  it("默认模板为 v5-20260618（flat），并内置采购统计表 pivot 模板", () => {
     assert.equal(DEFAULT_EXPORT_TEMPLATE_ID, "v5-20260618");
     const list = listExportTemplates();
-    assert.equal(list.length, 1);
+    assert.equal(list.length, 2);
     assert.equal(list[0].id, "v5-20260618");
+    assert.equal(list[0].kind, "flat");
+    const pivot = list.find((t) => t.id === "purchase-stats-20260619");
+    assert.equal(pivot?.kind, "pivot");
   });
 
   it("v5-20260618 的列与 v5 原版完全一致（列名/顺序）", () => {
@@ -86,5 +106,61 @@ describe("export templates", () => {
     assert.equal(exportCellValue(row, field("amount", "number")), 7);
     // 非核心字段从 extraJson 读取
     assert.equal(exportCellValue(row, field("spec", "text", false)), "大包");
+  });
+});
+
+describe("pivot 模板（采购统计表透视）", () => {
+  const template = getExportTemplate("purchase-stats-20260619") as PivotExportTemplate;
+  const rows: ExportSourceRow[] = [
+    mkRow({ code: "100001", name: "土豆", unit: "斤", qty: 20, price: 4, normalizedMonth: "2020年1月" }),
+    mkRow({ code: "100001", name: "土豆", unit: "斤", qty: 30, price: 6, normalizedMonth: "2019年12月" }),
+    mkRow({ code: "100005", name: "白萝卜", unit: "斤", qty: 11, price: 3, normalizedMonth: "2020年1月" }),
+  ];
+
+  async function build() {
+    const workbook = new ExcelJS.Workbook();
+    writePivotWorkbook(workbook, template, rows);
+    return workbook;
+  }
+
+  it("生成 目录 + 每产品一个 sheet（sheet 名=编码+名称）", async () => {
+    const wb = await build();
+    assert.deepEqual(
+      wb.worksheets.map((s) => s.name),
+      ["目录", "100001土豆", "100005白萝卜"],
+    );
+  });
+
+  it("目录页按顺序列出 序号/产品名", async () => {
+    const wb = await build();
+    const toc = wb.getWorksheet("目录")!;
+    assert.equal(toc.getCell("A1").value, "序号");
+    assert.equal(toc.getCell("B1").value, "产品名");
+    assert.equal(toc.getCell("A2").value, 1);
+    assert.equal(toc.getCell("B2").value, "100001土豆");
+    assert.equal(toc.getCell("A3").value, 2);
+    assert.equal(toc.getCell("B3").value, "100005白萝卜");
+  });
+
+  it("单产品 sheet：合并标题 + 月份列降序 + 数量落格 + 评估列计算", async () => {
+    const wb = await build();
+    const sheet = wb.getWorksheet("100001土豆")!;
+    // R1 合并标题
+    assert.equal(sheet.getCell("A1").value, "土豆采购统计表");
+    // R2 表头：序号|单位|2020年1月|2019年12月|评估单价|评估金额|备注（月份降序）
+    assert.deepEqual(
+      [1, 2, 3, 4, 5, 6, 7].map((c) => sheet.getRow(2).getCell(c).value),
+      ["序号", "单位", "2020年1月", "2019年12月", "评估单价", "评估金额", "备注"],
+    );
+    // R3：序号=1、单位=斤、2020年1月=20、评估单价=均值(4,6)=5、评估金额=5×(20+30)=250
+    assert.equal(sheet.getCell("A3").value, 1);
+    assert.equal(sheet.getCell("B3").value, "斤");
+    assert.equal(sheet.getCell("C3").value, 20);
+    assert.equal(sheet.getCell("E3").value, 5);
+    assert.equal(sheet.getCell("F3").value, 250);
+    // R4：第二条记录落在 2019年12月 列
+    assert.equal(sheet.getCell("D4").value, 30);
+    // 评估列只在首行
+    assert.equal(sheet.getCell("E4").value, null);
   });
 });

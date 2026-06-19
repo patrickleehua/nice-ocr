@@ -7,18 +7,18 @@ import {
   DEFAULT_EXPORT_TEMPLATE_ID,
   exportCellValue,
   getExportTemplate,
+  renderWorkbook,
   resolveTemplateColumns,
-  writeTemplateSheet,
   type ExportSourceRow,
-  type ExportTemplate,
+  type FlatExportTemplate,
 } from "@/lib/workflows/export-templates";
 
 export const xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
- * 按选定模板导出识别结果 xlsx。
- * 列由「活动场景字段 + 元字段」经模板解析，样式（深色表头/数字格式/CJK 列宽/冻结首行）由共享引擎套用。
- * 当前仅内置 v5 原版模板；模板系统已就绪，新增模板只需在 export-templates 注册表追加一项。
+ * 按选定模板导出识别结果 xlsx（buffer 版，含自适应列宽 + pivot 多 sheet）。
+ * 渲染由统一入口 `renderWorkbook` 按 kind 分派：flat=单表平铺，pivot=目录+单产品透视。
+ * pivot 需全量行在内存分组，故走 buffer 而非流式。
  */
 export async function buildRecognitionExport(
   templateId: string = DEFAULT_EXPORT_TEMPLATE_ID,
@@ -31,11 +31,10 @@ export async function buildRecognitionExport(
   });
   const scenarioId = await getActiveScenarioId();
   const template = getExportTemplate(templateId);
-  const columns = resolveTemplateColumns(template, scenarioId);
   const source = rows as unknown as ExportSourceRow[];
 
   const workbook = new ExcelJS.Workbook();
-  writeTemplateSheet(workbook, template.sheetName, columns, source);
+  renderWorkbook(workbook, template, source, scenarioId);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
@@ -52,8 +51,12 @@ const EXPORT_PAGE_SIZE = 500;
 export function streamRecognitionExport(
   templateId: string = DEFAULT_EXPORT_TEMPLATE_ID,
   db: DbClient = prisma,
-): { stream: ReadableStream<Uint8Array>; template: ExportTemplate } {
+): { stream: ReadableStream<Uint8Array>; template: FlatExportTemplate } {
   const template = getExportTemplate(templateId);
+  // 流式仅支持 flat 模板（pivot 需全量分组，走 buildRecognitionExport 的 buffer 版）。
+  if (template.kind !== "flat") {
+    throw new Error(`模板 ${template.id} 为 ${template.kind} 类型，不支持流式导出，请用 buildRecognitionExport`);
+  }
   const passthrough = new PassThrough();
   // 后台流式写入；任一环节出错则销毁流（客户端收到中断的下载，而非静默截断）。
   void writeStreamingWorkbook(passthrough, template, db).catch((error) => {
@@ -62,7 +65,7 @@ export function streamRecognitionExport(
   return { stream: Readable.toWeb(passthrough) as ReadableStream<Uint8Array>, template };
 }
 
-async function writeStreamingWorkbook(stream: Writable, template: ExportTemplate, db: DbClient) {
+async function writeStreamingWorkbook(stream: Writable, template: FlatExportTemplate, db: DbClient) {
   const scenarioId = await getActiveScenarioId();
   const columns = resolveTemplateColumns(template, scenarioId);
 

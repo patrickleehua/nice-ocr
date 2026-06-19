@@ -1,0 +1,54 @@
+# Tasks: selective-export-pivot-template
+
+> 顺序：M1 模板泛化+pivot → M2 选择性导出 → M3 批次绑定+scenario 抽取 → M4 导出模式。
+> 每个功能点完成跑 `npm run build` + `npm test`，按文件隔离 commit（[[commit-per-feature-point]] / [[nice-ocr-concurrent-dev]]）。
+
+## 0. 编码前门禁
+- [ ] 复核依赖（exceljs 4.4 / Next 16 / React 19 / Prisma 7，已确认）；查 ExcelJS 多 sheet/合并单元格/读已有文件 API 先看官方文档
+- [ ] 锁定：图标 lucide-react、复用既有 Button/select/token/`writeTemplateSheet`，无 emoji、颜色走 token
+
+## M1. 模板渲染策略泛化 + pivot 模板（先打通"能产出那份表"）✅ 完成（2026-06-19）
+- [x] M1.1 `export-templates.ts`：`ExportTemplateKind` + `FlatExportTemplate`/`PivotExportTemplate` 判别联合；现 `v5-20260618` 标 `kind:"flat"`，抽出 `writeTemplateSheet` 为 flat 渲染（行为不变）
+- [x] M1.2 `renderWorkbook(workbook, template, rows, scenarioId)` 统一入口，按 kind 分派
+- [x] M1.3 pivot 构建：分组（code+name）/ sheet 名安全化+去重+31字符截断 / 目录 sheet（序号·产品名，每栏 200 行列优先填充）/ 单产品 sheet（合并标题、月份列降序、qty 落格）
+- [x] M1.4 评估列计算：`评估单价=mean(price>0)`、`评估金额=评估单价×Σqty`，写首条数据行，numFmt `#,##0.00`
+- [x] M1.5 注册 `purchase-stats-20260619`（pivot，声明 `scenarioId:"grocery"`、filename）
+- [x] M1.6 `exports.ts` `buildRecognitionExport(templateId)` 改用 `renderWorkbook`；pivot 用 buffer 版（非流式），flat 仍可流式；route 按 kind 分派（pivot→buffer / flat→stream）
+- [x] M1.7 单测：透视分组/月份降序/数量落格/评估列/sheet 名安全化；`v5-20260618` 列回归不变（50/50 通过）
+- [x] M1.8 运行时：写盘→exceljs 读回校验 sheet 数/合并标题/表头/月份格值/评估列 + 边界（空编码/超长名31字符/price=0排除）→ 通过
+
+## M2. 选择性导出（批次 + 当前筛选）
+- [ ] M2.1 `exports.ts`：`ExportScope` 类型 + `scopeToWhere(scope)`（复用 rows API 筛选语义），`buildRecognitionExport`/`streamRecognitionExport` 接 scope；缺省=全库（兼容）
+- [ ] M2.2 `POST /api/exports/recognition` body 扩展 `{ templateId?, scope? }`，Zod 校验
+- [ ] M2.3 `apiPaths` 无新增；`ExportMenu` 接 `scope` props（结果页传当前筛选；批次详情页传 batchId）
+- [ ] M2.4 结果页/批次详情页传入 scope，下拉提示"按当前筛选/本批次导出"
+- [ ] M2.5 单测：scopeToWhere 各字段 + rowIds 预留；运行时按筛选导出行数正确
+- [ ] （下一期）行级多选 checkbox 列 + `scope.rowIds`
+
+## M3. 批次绑定模板 + scenario 驱动抽取
+### M3a 数据模型 + 创建 UI + 绑定
+- [ ] M3a.1 Prisma：Batch 加 `exportTemplateId String?` + `scenarioId String?`，`prisma generate` + migrate（[[prisma-generate-required]]）
+- [ ] M3a.2 `batchCreateSchema`（[batches/route.ts](../../../nice-ocr/src/app/api/batches/route.ts)）+ create 写两字段；GET 返回带两字段
+- [ ] M3a.3 `CreateBatchPayload` + `CreateBatchDrawer`（[action-dialogs.tsx](../../../nice-ocr/src/components/dialogs/action-dialogs.tsx)）加"导出模板"下拉（GET /api/exports/templates，lucide，无 emoji），选模板带出 scenario
+- [ ] M3a.4 批次详情页导出默认用 `batch.exportTemplateId` + `scope.batchId`
+- [ ] M3a.5 单测：create 落两字段 + 导出按批次取模板
+
+### M3b 识别链路动态化（grocery 行为保持）
+- [ ] M3b.1 `schema.ts`：`buildExtractionRowSchema(fields)` / `buildExtractionResultSchema(fields)` 动态 zod；保留 `extractionResultSchema` 作 grocery 等价默认
+- [ ] M3b.2 `settings.ts`：`buildRecognitionPrompt(scenario, fields)`，grocery 文案与现 `defaultRecognitionPrompts` 等价
+- [ ] M3b.3 `provider.ts`：`createConfiguredRecognitionProvider(scenarioId?)` + `createRecognitionProvider(target, prompts, schema, normalize)` 注入动态 schema；`normalizeExtraction` 拆核心列/extraJson
+- [ ] M3b.4 worker 调用点透传 `batch.scenarioId`（与 `resolveRecognitionProviders(batch)` 并列）
+- [ ] M3b.5 单测：动态 schema/prompt 生成 + grocery 等价 + extra 字段往返（入库→读取→导出）
+
+## M4. 导出模式（新建/追加/合并，上传基准并入）
+- [ ] M4.1 `POST /api/exports/recognition` 支持 `multipart`（`baseFile` + `meta`），`mode: new|append|merge`
+- [ ] M4.2 `exports.ts`：读基准 xlsx（exceljs `load`）+ 结构校验（目录 + 产品 sheet 表头匹配）；pivot 并入（补产品 sheet / 补月份列 / append 行）；flat 并入（表尾续写）
+- [ ] M4.3 `apiDownload` 扩展支持 `FormData` body（带文件下载）；`ExportMenu` 加模式选择 + 文件上传（pivot 模板才出"上传基准"）
+- [ ] M4.4 `ExportRecord` 落库：`{ batchId, type, templateId, filterJson(scope), mode, rowCount }`
+- [ ] M4.5 单测：append 产品并集 + 月份并集 + 行追加；结构不符报错；运行时上传样本 xlsx 校验行增长
+
+## F. 质量门 / 交付
+- [ ] F1 `npm run build` + lint 零错误
+- [ ] F2 `npm test`（隔离 test.db，[[nice-ocr-test-setup]]）全绿，含新增单测；现有 22 测试不回归
+- [ ] F3 运行时冒烟：批次选模板→抽取→选择性导出→追加，逐项截图/exceljs 留证（[[nice-ocr-next-start-port-gotcha]]）
+- [ ] F4 更新 output/nice-ocr-architecture.md + 本 change 的 proof-pack
