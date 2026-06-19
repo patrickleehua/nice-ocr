@@ -23,7 +23,7 @@
 - [x] M2.3 `ExportMenu` 接 `scope` props（结果页传当前筛选；批次详情页传 batchId）
 - [x] M2.4 结果页传当前筛选、批次详情页头部新增「按本批次导出」入口；下拉显示"导出范围：当前筛选/批次 vs 全部结果"
 - [x] M2.5 单测：scopeToWhere 各字段 + 空值忽略 + rowIds；DB 集成测试：按 name 过滤=1 行、不存在 batchId=空表
-- [ ] （下一期）行级多选 checkbox 列 + `scope.rowIds`（后端已就绪）
+- [x] 行级多选 checkbox 列（跨页按 id 保留、本页全选、已选计数/清除）→ 选中时导出 `scope.rowIds`，否则按筛选（2026-06-19）
 
 ## M3. 批次绑定模板 + scenario 驱动抽取
 ### M3a 数据模型 + 创建 UI + 绑定 ✅ 完成（2026-06-19）

@@ -14,6 +14,7 @@ import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } f
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
+import type { ExportScope } from "@/lib/workflows/exports";
 import type { RecognitionRow, RiskLevel, RowStatus } from "@/lib/types";
 
 interface ApiRecognitionRow {
@@ -129,6 +130,8 @@ export function ResultsPage() {
     audit: searchParams.get("audit") ?? "",
     name: searchParams.get("name") ?? "",
   });
+  // 行级多选：按 id 跨页保留；选中时导出仅这些行（scope.rowIds），否则按当前筛选。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const fieldSchema = useFieldSchema();
   // 加载前用默认场景字段兜底，避免初次渲染列结构跳变。
@@ -151,6 +154,36 @@ export function ResultsPage() {
   const rows = data?.rows?.map(toRecognitionRow) ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const pageRowIds = rows.map((row) => row.id);
+  const allPageSelected = pageRowIds.length > 0 && pageRowIds.every((id) => selectedIds.has(id));
+  const selectedCount = selectedIds.size;
+
+  function toggleRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function togglePage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageRowIds.forEach((id) => next.delete(id));
+      else pageRowIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  // 选中行 → 导出仅这些行；否则按当前筛选条件导出。
+  const exportScope: ExportScope =
+    selectedCount > 0
+      ? { rowIds: [...selectedIds] }
+      : { status: filters.status, risk: filters.risk, auditState: filters.audit, name: filters.name };
 
   const updateRow = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
@@ -197,7 +230,7 @@ export function ResultsPage() {
     setFilters((current) => ({ ...current, ...patch }));
   }
 
-  const columnCount = 4 + fields.length + 6;
+  const columnCount = 5 + fields.length + 6;
 
   return (
     <div className="space-y-4">
@@ -210,14 +243,7 @@ export function ResultsPage() {
           <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
             <RotateCcw size={15} />重建产品库
           </Button>
-          <ExportMenu
-            scope={{
-              status: filters.status,
-              risk: filters.risk,
-              auditState: filters.audit,
-              name: filters.name,
-            }}
-          />
+          <ExportMenu scope={exportScope} />
         </div>
       </div>
 
@@ -264,6 +290,14 @@ export function ResultsPage() {
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Filter size={14} />共 {total} 条
           </span>
+          {selectedCount > 0 ? (
+            <span className="inline-flex items-center gap-2 text-xs text-foreground">
+              已选 {selectedCount} 行
+              <button className="text-muted-foreground underline-offset-2 hover:underline" onClick={clearSelection}>
+                清除
+              </button>
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -271,6 +305,15 @@ export function ResultsPage() {
         <DataTable>
           <thead className={tableHeadClass}>
             <tr>
+              <th className={tableCellClass}>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary align-middle"
+                  aria-label="选择本页全部行"
+                  checked={allPageSelected}
+                  onChange={togglePage}
+                />
+              </th>
               <th className={tableCellClass}>行号</th>
               <th className={tableCellClass}>批次</th>
               <th className={tableCellClass}>文档</th>
@@ -291,7 +334,16 @@ export function ResultsPage() {
           <tbody>
             {rows.length ? (
               rows.map((row, index) => (
-                <tr key={row.id} className="hover:bg-muted/70">
+                <tr key={row.id} className={selectedIds.has(row.id) ? "bg-primary/5" : "hover:bg-muted/70"}>
+                  <td className={tableCellClass}>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary align-middle"
+                      aria-label={`选择第 ${(page - 1) * PAGE_SIZE + index + 1} 行`}
+                      checked={selectedIds.has(row.id)}
+                      onChange={() => toggleRow(row.id)}
+                    />
+                  </td>
                   <td className={tableCellClass}>{(page - 1) * PAGE_SIZE + index + 1}</td>
                   <td className={tableCellClass}>{row.batchName}</td>
                   <td className={tableCellClass}>{row.documentName}</td>
