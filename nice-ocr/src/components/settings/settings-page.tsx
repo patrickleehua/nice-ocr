@@ -7,6 +7,7 @@ import { apiGet, apiJson } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type Protocol = "openai_responses" | "anthropic_messages";
@@ -107,7 +108,7 @@ export function SettingsPage() {
   const [syncedFrom, setSyncedFrom] = useState<SettingsPayload | null>(null);
   const [testState, setTestState] = useState<Record<string, string>>({});
   const [importState, setImportState] = useState<Record<string, string>>({});
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   // 渲染期同步：拉到新设置时初始化可编辑副本，避免在 effect 内 setState 触发级联渲染。
   if (data && data !== syncedFrom) {
@@ -162,7 +163,7 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         <Panel>
           <PanelHeader><PanelTitle>识别策略</PanelTitle></PanelHeader>
           <div className="space-y-4 p-4">
@@ -255,18 +256,16 @@ export function SettingsPage() {
           </PanelHeader>
           <div className="p-4">
             {draft.providers.length ? (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-2.5">
                 {draft.providers.map((provider, index) => {
                   const cardKey = provider.id ?? provider.providerKey;
-                  const expanded = expandedKey === cardKey;
                   const enabledModels = provider.models.filter((model) => model.enabled);
                   return (
                     <div
                       key={cardKey}
                       className={cn(
-                        "flex flex-col gap-3 rounded-md border bg-surface p-4 transition-colors",
+                        "flex flex-col gap-2.5 rounded-md border bg-surface p-3 transition-colors",
                         provider.enabled ? "border-border" : "border-dashed border-border",
-                        expanded && "ring-1 ring-primary/40 sm:col-span-2 xl:col-span-3",
                       )}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -289,114 +288,18 @@ export function SettingsPage() {
                         </label>
                       </div>
 
-                      <div className="space-y-2">
-                        <div className="truncate text-xs text-muted-foreground" title={enabledModels.map((model) => model.modelId).join(", ")}>
-                          {enabledModels.length ? enabledModels.map((model) => model.modelId).join(" / ") : "没有启用模型"}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          <Badge>{protocolLabel(provider.protocol)}</Badge>
-                          <Badge>{provider.models.length} models</Badge>
-                          {provider.hasApiKey ? <Badge tone="success">已配密钥</Badge> : <Badge tone="danger">无密钥</Badge>}
-                        </div>
+                      <div className="truncate text-xs text-muted-foreground" title={enabledModels.map((model) => model.modelId).join(", ")}>
+                        {enabledModels.length ? enabledModels.map((model) => model.modelId).join(" / ") : "没有启用模型"}
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant={expanded ? "primary" : "secondary"}
-                          onClick={() => setExpandedKey(expanded ? null : cardKey)}
-                        >
-                          <Settings2 size={14} />{expanded ? "收起" : "配置"}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge>{protocolLabel(provider.protocol)}</Badge>
+                        <Badge>{provider.models.length} models</Badge>
+                        {provider.hasApiKey ? <Badge tone="success">已配密钥</Badge> : <Badge tone="danger">无密钥</Badge>}
+                        <Button size="sm" variant="secondary" className="ml-auto" onClick={() => setEditingKey(cardKey)}>
+                          <Settings2 size={14} />配置
                         </Button>
-                        {provider.protocol === "openai_responses" ? (
-                          <Button size="sm" variant="ghost" onClick={() => importModels(provider)}>
-                            <Download size={14} />导入
-                          </Button>
-                        ) : null}
-                        {importState[cardKey] ? (
-                          <span className="truncate text-xs text-muted-foreground">{importState[cardKey]}</span>
-                        ) : null}
                       </div>
-
-                      {expanded ? (
-                        <div className="space-y-4 border-t border-border pt-3">
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <TextField label="Provider Key" value={provider.providerKey} onChange={(value) => updateProvider(index, { providerKey: value })} />
-                            <TextField label="显示名称" value={provider.displayName} onChange={(value) => updateProvider(index, { displayName: value })} />
-                            <label className="block text-sm">
-                              <span className="mb-1 block text-muted-foreground">协议</span>
-                              <select
-                                className="h-9 w-full rounded-md border border-border bg-background px-3"
-                                value={provider.protocol}
-                                onChange={(event) => updateProvider(index, defaultProtocolPatch(event.target.value as Protocol))}
-                              >
-                                {protocolOptions.map((option) => (
-                                  <option key={option.value} value={option.value}>{option.label}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <TextField label="Base URL" value={provider.baseUrl} onChange={(value) => updateProvider(index, { baseUrl: value })} />
-                            <TextField label="API Key" type="password" value={provider.apiKey ?? ""} placeholder={provider.hasApiKey ? "留空则保留当前密钥" : "输入 API Key"} onChange={(value) => updateProvider(index, { apiKey: value })} />
-                            <NumberField label="优先级" value={provider.priority} onChange={(value) => updateProvider(index, { priority: value })} />
-                            <NumberField label="最大输出 Tokens" value={provider.maxOutputTokens} onChange={(value) => updateProvider(index, { maxOutputTokens: value })} />
-                          </div>
-
-                          <div className="space-y-2 rounded-md border border-border bg-background p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-sm font-medium">模型选项</div>
-                              <Button size="sm" variant="secondary" onClick={() => addModel(index)}>
-                                <Plus size={14} />新增模型
-                              </Button>
-                            </div>
-                            <div className="space-y-2">
-                              {provider.models.map((model, modelIndex) => (
-                                <div key={model.id ?? `${model.modelId}-${modelIndex}`} className="grid gap-2 rounded-md border border-border bg-surface p-2 md:grid-cols-[1.2fr_1fr_88px_96px_auto]">
-                                  <TextField label="Model ID" value={model.modelId} onChange={(value) => updateModel(index, modelIndex, { modelId: value })} />
-                                  <TextField label="显示名" value={model.displayName} onChange={(value) => updateModel(index, modelIndex, { displayName: value })} />
-                                  <NumberField label="优先级" value={model.priority} onChange={(value) => updateModel(index, modelIndex, { priority: value })} />
-                                  <label className="flex items-end gap-2 pb-2 text-sm text-muted-foreground">
-                                    <input
-                                      type="checkbox"
-                                      checked={model.enabled}
-                                      onChange={(event) => updateModel(index, modelIndex, { enabled: event.target.checked })}
-                                    />
-                                    启用
-                                  </label>
-                                  <div className="flex items-end gap-1">
-                                    <Button size="icon" variant="ghost" aria-label="测试模型" onClick={() => testProviderModel(provider, model)}>
-                                      <TestTube2 size={14} />
-                                    </Button>
-                                    {!model.id ? (
-                                      <Button size="icon" variant="ghost" aria-label="删除未保存模型" onClick={() => removeModel(index, modelIndex)}>
-                                        <Trash2 size={14} />
-                                      </Button>
-                                    ) : null}
-                                  </div>
-                                  <div className="md:col-span-5">
-                                    <span className="text-xs text-muted-foreground">
-                                      {model.source === "imported" ? "导入" : "手动"}
-                                      {testState[testKey(provider, model)] ? ` · ${testState[testKey(provider, model)]}` : ""}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <TextAreaField
-                            label="系统提示词覆盖"
-                            value={provider.systemPrompt ?? ""}
-                            placeholder="留空则使用全局默认系统提示词"
-                            onChange={(value) => updateProvider(index, { systemPrompt: value })}
-                          />
-                          <TextAreaField
-                            label="用户提示词覆盖"
-                            value={provider.userPrompt ?? ""}
-                            placeholder="留空则使用全局默认用户提示词"
-                            onChange={(value) => updateProvider(index, { userPrompt: value })}
-                          />
-                        </div>
-                      ) : null}
                     </div>
                   );
                 })}
@@ -409,6 +312,8 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+
+      {renderProviderDialog()}
 
       <Panel>
         <PanelHeader><PanelTitle>全局识别提示词</PanelTitle></PanelHeader>
@@ -432,6 +337,114 @@ export function SettingsPage() {
       </Panel>
     </div>
   );
+
+  function renderProviderDialog() {
+    if (!draft) return null;
+    const index = draft.providers.findIndex((provider) => (provider.id ?? provider.providerKey) === editingKey);
+    const provider = index >= 0 ? draft.providers[index] : null;
+    const cardKey = provider ? provider.id ?? provider.providerKey : "";
+    return (
+      <Dialog
+        open={Boolean(provider)}
+        onClose={() => setEditingKey(null)}
+        title={provider ? provider.displayName || provider.providerKey : ""}
+        description="配置协议、密钥、模型选项与提示词覆盖；改动需点右上角「保存设置」后生效。"
+        footer={
+          <Button variant="primary" onClick={() => setEditingKey(null)}>完成</Button>
+        }
+      >
+        {provider ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <TextField label="Provider Key" value={provider.providerKey} onChange={(value) => updateProvider(index, { providerKey: value })} />
+              <TextField label="显示名称" value={provider.displayName} onChange={(value) => updateProvider(index, { displayName: value })} />
+              <label className="block text-sm">
+                <span className="mb-1 block text-muted-foreground">协议</span>
+                <select
+                  className="h-9 w-full rounded-md border border-border bg-background px-3"
+                  value={provider.protocol}
+                  onChange={(event) => updateProvider(index, defaultProtocolPatch(event.target.value as Protocol))}
+                >
+                  {protocolOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <TextField label="Base URL" value={provider.baseUrl} onChange={(value) => updateProvider(index, { baseUrl: value })} />
+              <TextField label="API Key" type="password" value={provider.apiKey ?? ""} placeholder={provider.hasApiKey ? "留空则保留当前密钥" : "输入 API Key"} onChange={(value) => updateProvider(index, { apiKey: value })} />
+              <NumberField label="优先级" value={provider.priority} onChange={(value) => updateProvider(index, { priority: value })} />
+              <NumberField label="最大输出 Tokens" value={provider.maxOutputTokens} onChange={(value) => updateProvider(index, { maxOutputTokens: value })} />
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border bg-background p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-medium">模型选项</div>
+                <div className="flex items-center gap-2">
+                  {provider.protocol === "openai_responses" ? (
+                    <Button size="sm" variant="ghost" onClick={() => importModels(provider)}>
+                      <Download size={14} />导入
+                    </Button>
+                  ) : null}
+                  <Button size="sm" variant="secondary" onClick={() => addModel(index)}>
+                    <Plus size={14} />新增模型
+                  </Button>
+                </div>
+              </div>
+              {importState[cardKey] ? (
+                <div className="text-xs text-muted-foreground">{importState[cardKey]}</div>
+              ) : null}
+              <div className="space-y-2">
+                {provider.models.map((model, modelIndex) => (
+                  <div key={model.id ?? `${model.modelId}-${modelIndex}`} className="grid gap-2 rounded-md border border-border bg-surface p-2 md:grid-cols-[1.2fr_1fr_88px_96px_auto]">
+                    <TextField label="Model ID" value={model.modelId} onChange={(value) => updateModel(index, modelIndex, { modelId: value })} />
+                    <TextField label="显示名" value={model.displayName} onChange={(value) => updateModel(index, modelIndex, { displayName: value })} />
+                    <NumberField label="优先级" value={model.priority} onChange={(value) => updateModel(index, modelIndex, { priority: value })} />
+                    <label className="flex items-end gap-2 pb-2 text-sm text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={model.enabled}
+                        onChange={(event) => updateModel(index, modelIndex, { enabled: event.target.checked })}
+                      />
+                      启用
+                    </label>
+                    <div className="flex items-end gap-1">
+                      <Button size="icon" variant="ghost" aria-label="测试模型" onClick={() => testProviderModel(provider, model)}>
+                        <TestTube2 size={14} />
+                      </Button>
+                      {!model.id ? (
+                        <Button size="icon" variant="ghost" aria-label="删除未保存模型" onClick={() => removeModel(index, modelIndex)}>
+                          <Trash2 size={14} />
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="md:col-span-5">
+                      <span className="text-xs text-muted-foreground">
+                        {model.source === "imported" ? "导入" : "手动"}
+                        {testState[testKey(provider, model)] ? ` · ${testState[testKey(provider, model)]}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <TextAreaField
+              label="系统提示词覆盖"
+              value={provider.systemPrompt ?? ""}
+              placeholder="留空则使用全局默认系统提示词"
+              onChange={(value) => updateProvider(index, { systemPrompt: value })}
+            />
+            <TextAreaField
+              label="用户提示词覆盖"
+              value={provider.userPrompt ?? ""}
+              placeholder="留空则使用全局默认用户提示词"
+              onChange={(value) => updateProvider(index, { userPrompt: value })}
+            />
+          </div>
+        ) : null}
+      </Dialog>
+    );
+  }
 
   function updateDefaults<K extends keyof SettingsPayload["defaults"]>(key: K, value: SettingsPayload["defaults"][K]) {
     setDraft((current) => current ? { ...current, defaults: { ...current.defaults, [key]: value } } : current);
@@ -476,7 +489,7 @@ export function SettingsPage() {
     if (!draft) return;
     const newKey = `provider-${draft.providers.length + 1}`;
     setDraft({ ...draft, providers: [...draft.providers, { ...defaultProvider, providerKey: newKey }] });
-    setExpandedKey(newKey);
+    setEditingKey(newKey);
   }
 
   function addModel(providerIndex: number) {
