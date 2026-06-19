@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db/client";
 import { env } from "@/lib/env";
+import { logger } from "@/lib/logger";
 import {
   createRecognitionProvider,
   resolveProviderPrompts,
@@ -139,7 +140,7 @@ async function extractDocument(job: ClaimedJob) {
     },
   });
 
-  console.log(
+  logger.info(
     `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved}`,
   );
 }
@@ -166,7 +167,7 @@ async function auditDocument(job: ClaimedJob) {
   });
 
   if (!aiAutoRows.length) {
-    console.log(`${workerId} audit doc=${job.documentId} aiAuto=0 flagged=0 (skip)`);
+    logger.info(`${workerId} audit doc=${job.documentId} aiAuto=0 flagged=0 (skip)`);
     return;
   }
 
@@ -231,7 +232,7 @@ async function auditDocument(job: ClaimedJob) {
       stage2 = true;
     } catch (error) {
       // 无可用审核 provider 或调用失败 → 仅用 Stage1 结果，不让审核任务失败。
-      console.warn(`${workerId} audit doc=${job.documentId} stage2 skipped: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`${workerId} audit doc=${job.documentId} stage2 skipped: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -261,7 +262,7 @@ async function auditDocument(job: ClaimedJob) {
     },
   });
 
-  console.log(
+  logger.info(
     `${workerId} audit doc=${job.documentId} aiAuto=${auditables.length} flagged=${flagged} stage2=${stage2}`,
   );
 }
@@ -296,7 +297,7 @@ async function reclaimStaleJobs() {
     data: { status: "queued", lockedAt: null, lockedBy: null },
   });
   if (reclaimed.count > 0) {
-    console.log(`${workerId} reclaimed ${reclaimed.count} stale active job(s)`);
+    logger.info(`${workerId} reclaimed ${reclaimed.count} stale active job(s)`);
   }
 }
 
@@ -331,13 +332,13 @@ async function handleClaimedJob(job: ClaimedJob) {
         data: { status: shouldRetry ? "queued" : "failed" },
       });
     }
-    console.error(`${workerId} failed job=${job.id} type=${job.type}: ${message}`);
+    logger.error(`${workerId} failed job=${job.id} type=${job.type}: ${message}`);
   }
 }
 
 async function main() {
   const concurrency = env.workerConcurrency;
-  console.log(`${workerId} started (concurrency=${concurrency})`);
+  logger.info(`${workerId} started (concurrency=${concurrency})`);
   await reclaimStaleJobs();
 
   const inFlight = new Set<Promise<void>>();
@@ -363,21 +364,21 @@ async function main() {
   }
 
   // 优雅停机：不再领新 job，等在途 job 跑完再断开连接。
-  console.log(`${workerId} shutting down, draining ${inFlight.size} in-flight job(s)...`);
+  logger.info(`${workerId} shutting down, draining ${inFlight.size} in-flight job(s)...`);
   await Promise.allSettled(inFlight);
   await prisma.$disconnect();
-  console.log(`${workerId} stopped`);
+  logger.info(`${workerId} stopped`);
 }
 
 function requestShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${workerId} received ${signal}, will stop after in-flight jobs finish`);
+  logger.info(`${workerId} received ${signal}, will stop after in-flight jobs finish`);
 }
 process.on("SIGTERM", () => requestShutdown("SIGTERM"));
 process.on("SIGINT", () => requestShutdown("SIGINT"));
 
 main().catch((error) => {
-  console.error(error);
+  logger.error("worker crashed", { error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
   process.exit(1);
 });

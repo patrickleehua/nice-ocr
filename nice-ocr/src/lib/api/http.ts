@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError, type ZodType } from "zod";
+import { logger } from "@/lib/logger";
 
 /**
  * 统一的 route handler 错误处理 + 请求体校验工具。
@@ -42,7 +43,9 @@ export async function handleRoute(fn: () => Promise<Response>): Promise<Response
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     }
-    console.error("Unhandled route error:", error);
+    logger.error("unhandled route error", {
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    });
     return NextResponse.json({ error: "服务器内部错误", code: "INTERNAL" }, { status: 500 });
   }
 }
