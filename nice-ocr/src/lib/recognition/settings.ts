@@ -2,6 +2,7 @@ import type { AiProviderConfig, AiProviderModel } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { decryptSecret, encryptSecretForStorage } from "@/lib/crypto/secret";
 import { normalizeApprovalMode, type ApprovalMode } from "@/lib/recognition/review";
+import { DEFAULT_SCENARIO_ID, type FieldDef, type FieldScenario } from "@/lib/fields/field-schema";
 
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
 export const providerModelSources = ["manual", "imported"] as const;
@@ -15,6 +16,26 @@ export const defaultRecognitionPrompts = {
     "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。",
   userPrompt: "请抽取这张单据图片中的日期和所有表格明细行。",
 } as const;
+
+/**
+ * 按场景 + 字段生成识别提示词（替换写死副食品文案）。
+ * 默认场景（grocery）返回内置默认提示词，保持零行为变更；其它场景按字段标签/提示动态生成。
+ */
+export function buildRecognitionPrompt(
+  scenario: FieldScenario,
+  fields: FieldDef[],
+): { systemPrompt: string; userPrompt: string } {
+  if (scenario.id === DEFAULT_SCENARIO_ID) {
+    return { systemPrompt: defaultRecognitionPrompts.systemPrompt, userPrompt: defaultRecognitionPrompts.userPrompt };
+  }
+  const fieldList = fields
+    .map((field) => (field.recognitionHint ? `${field.label}（${field.recognitionHint}）` : field.label))
+    .join("、");
+  return {
+    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。`,
+    userPrompt: `请抽取这张「${scenario.name}」图片中的日期和所有表格明细行。`,
+  };
+}
 
 export interface RecognitionDefaults {
   strategy: "fast" | "balanced" | "consensus" | "manual";

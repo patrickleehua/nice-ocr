@@ -7,11 +7,13 @@ import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import {
   createRecognitionProvider,
+  extractionConfigForScenario,
   resolveProviderPrompts,
   type RecognitionProvider,
   type RecognitionProviderResult,
 } from "@/lib/recognition/provider";
-import { resolveAuditRecognitionTarget, resolveRecognitionProviders } from "@/lib/recognition/settings";
+import { buildRecognitionPrompt, resolveAuditRecognitionTarget, resolveRecognitionProviders } from "@/lib/recognition/settings";
+import { getScenario, getScenarioFields } from "@/lib/fields/field-schema";
 import { claimNextJob } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
 import {
@@ -72,13 +74,28 @@ async function recognizePass(provider: RecognitionProvider, job: ClaimedJob, ima
 
 // ---------- 识别(extract / second_pass / consensus) ----------
 
+/**
+ * 批次绑定场景的抽取上下文：动态 schema/normalize + 按场景生成的提示词回退。
+ * 默认场景（grocery）走默认配置且提示词与内置默认等价 → 现有批次零行为变更。
+ */
+function scenarioContext(job: ClaimedJob) {
+  const scenarioId = job.batch.scenarioId ?? null;
+  const fields = getScenarioFields(scenarioId);
+  return {
+    extraction: extractionConfigForScenario(scenarioId),
+    promptFallback: buildRecognitionPrompt(getScenario(scenarioId), fields),
+    hasExtra: fields.some((field) => !field.core),
+  };
+}
+
 async function extractDocument(job: ClaimedJob) {
   const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
   const mode = normalizeApprovalMode(job.batch.approvalMode);
+  const { extraction, promptFallback, hasExtra } = scenarioContext(job);
 
-  // 双模型交叉验证：pass1 主模型、pass2 副模型（提示词按 provider 覆盖，回退全局默认）。
+  // 双模型交叉验证：pass1 主模型、pass2 副模型（提示词按 provider 覆盖→全局→场景生成）。
   const { primary, secondary, defaults } = await resolveRecognitionProviders(job.batch);
-  const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary.provider, defaults));
+  const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary.provider, defaults, promptFallback), extraction);
 
   // 第一次识别（canonical 结果，主模型）。
   const first = await recognizePass(primaryProvider, job, imageBase64, 1);
@@ -90,7 +107,7 @@ async function extractDocument(job: ClaimedJob) {
     const secondaryProvider =
       secondary.provider.id === primary.provider.id && secondary.model.id === primary.model.id
         ? primaryProvider
-        : createRecognitionProvider(secondary, resolveProviderPrompts(secondary.provider, defaults));
+        : createRecognitionProvider(secondary, resolveProviderPrompts(secondary.provider, defaults, promptFallback), extraction);
     const second = await recognizePass(secondaryProvider, job, imageBase64, 2);
     consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows);
   }
@@ -127,6 +144,8 @@ async function extractDocument(job: ClaimedJob) {
         riskLevel: validation.riskLevel,
         riskReasonsJson: JSON.stringify(validation.reasons),
         conflictState: validation.reasons.length ? "open" : "none",
+        // 非默认场景声明了 extra 字段时落库 extraJson；grocery 无 extra → 不写（保持默认 "{}"）。
+        ...(hasExtra ? { extraJson: JSON.stringify(row.extra ?? {}) } : {}),
       },
     });
   }
@@ -200,10 +219,11 @@ async function auditDocument(job: ClaimedJob) {
   const suggestionByRow = new Map<string, AuditableRow>();
   if (runStage2) {
     try {
+      const { extraction, promptFallback } = scenarioContext(job);
       const auditProvider = await resolveAuditProvider(primary, secondary, defaults.auditProviderKey, defaults.auditModelId);
       const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
       const pass = await recognizePass(
-        createRecognitionProvider(auditProvider, resolveProviderPrompts(auditProvider.provider, defaults)),
+        createRecognitionProvider(auditProvider, resolveProviderPrompts(auditProvider.provider, defaults, promptFallback), extraction),
         job,
         imageBase64,
         3,

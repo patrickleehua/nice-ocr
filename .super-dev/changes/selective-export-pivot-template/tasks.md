@@ -33,12 +33,12 @@
 - [x] M3a.4 批次详情页 ExportMenu 接 `defaultTemplateId={batch.exportTemplateId}` + `scope.batchId`：一键直出绑定模板，多模板可下拉切换
 - [x] M3a.5 DB 集成测试：批次绑定模板 + 派生场景往返（54/54 通过）
 
-### M3b 识别链路动态化（grocery 行为保持）
-- [ ] M3b.1 `schema.ts`：`buildExtractionRowSchema(fields)` / `buildExtractionResultSchema(fields)` 动态 zod；保留 `extractionResultSchema` 作 grocery 等价默认
-- [ ] M3b.2 `settings.ts`：`buildRecognitionPrompt(scenario, fields)`，grocery 文案与现 `defaultRecognitionPrompts` 等价
-- [ ] M3b.3 `provider.ts`：`createConfiguredRecognitionProvider(scenarioId?)` + `createRecognitionProvider(target, prompts, schema, normalize)` 注入动态 schema；`normalizeExtraction` 拆核心列/extraJson
-- [ ] M3b.4 worker 调用点透传 `batch.scenarioId`（与 `resolveRecognitionProviders(batch)` 并列）
-- [ ] M3b.5 单测：动态 schema/prompt 生成 + grocery 等价 + extra 字段往返（入库→读取→导出）
+### M3b 识别链路动态化（grocery 行为保持）✅ 完成（2026-06-19）
+- [x] M3b.1 `schema.ts`：`buildExtractionRowSchema`/`buildExtractionResultSchema` 动态 zod + `normalizeExtractionWith`（拆核心列/extra）；`extractionResultSchema`/`normalizeExtraction` 保留为 grocery 默认
+- [x] M3b.2 `settings.ts`：`buildRecognitionPrompt(scenario, fields)`，grocery 返回内置默认（零变更），非默认按字段标签/hint 生成
+- [x] M3b.3 `provider.ts`：`ExtractionConfig` 注入（schema+normalize）+ `extractionConfigForScenario`；`createRecognitionProvider(target, prompts, extraction)`；`resolveProviderPrompts` 加 fallback 参数
+- [x] M3b.4 worker `scenarioContext(job)` 透传 `batch.scenarioId`（主/副/审核三处 provider），按 hasExtra 落 extraJson
+- [x] M3b.5 单测：grocery 动态↔默认 schema 等价、prompt 生成、extra 拆分、默认场景复用；类型/lint/58 测试/`next build` 全过
 
 ## M4. 导出模式（新建/追加/合并，上传基准并入）
 - [ ] M4.1 `POST /api/exports/recognition` 支持 `multipart`（`baseFile` + `meta`），`mode: new|append|merge`
