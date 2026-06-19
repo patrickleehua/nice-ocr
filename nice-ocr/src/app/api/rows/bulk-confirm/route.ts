@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { prisma } from "@/lib/db/client";
 import { confirmRecognitionRows } from "@/lib/workflows/rows";
+import { badRequest, handleRoute, parseJson } from "@/lib/api/http";
 
 export const runtime = "nodejs";
+
+const bulkConfirmSchema = z.object({
+  rowIds: z.array(z.string()).optional(),
+  documentId: z.string().optional(),
+  batchId: z.string().optional(),
+  onlyLowRisk: z.boolean().optional(),
+});
 
 /**
  * 批量确认识别行。支持三种选择方式（按优先级）：
@@ -11,16 +21,22 @@ export const runtime = "nodejs";
  * 三者都缺失时返回 400，避免空选择误确认全部数据。
  */
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const updated = await confirmRecognitionRows({
-    rowIds: Array.isArray(body.rowIds) ? body.rowIds : undefined,
-    documentId: body.documentId,
-    batchId: body.batchId,
-    onlyLowRisk: body.onlyLowRisk,
-  });
+  return handleRoute(async () => {
+    const body = await parseJson(request, bulkConfirmSchema);
+    // 确认 + 同步把已 flagged 行置 reviewed 放进一个事务，保证两次 updateMany 原子生效。
+    const updated = await prisma.$transaction((tx) =>
+      confirmRecognitionRows(
+        {
+          rowIds: body.rowIds,
+          documentId: body.documentId,
+          batchId: body.batchId,
+          onlyLowRisk: body.onlyLowRisk,
+        },
+        tx,
+      ),
+    );
 
-  if (updated === null) {
-    return NextResponse.json({ error: "Provide rowIds[], documentId or batchId" }, { status: 400 });
-  }
-  return NextResponse.json({ updated });
+    if (updated === null) throw badRequest("Provide rowIds[], documentId or batchId");
+    return NextResponse.json({ updated });
+  });
 }

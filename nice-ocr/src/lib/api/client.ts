@@ -1,6 +1,18 @@
+/** 从错误响应解析可读消息：优先 JSON 的 { error } 字段，否则回退原始文本/状态码。 */
+async function errorFromResponse(response: Response): Promise<Error> {
+  const text = await response.text();
+  try {
+    const body = JSON.parse(text);
+    if (body && typeof body.error === "string") return new Error(body.error);
+  } catch {
+    /* 非 JSON，回退到原始文本 */
+  }
+  return new Error(text || `请求失败（${response.status}）`);
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(path);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await errorFromResponse(response);
   return response.json() as Promise<T>;
 }
 
@@ -12,13 +24,13 @@ export async function apiJson<T>(path: string, init: RequestInit): Promise<T> {
       ...(init.headers ?? {}),
     },
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await errorFromResponse(response);
   return response.json() as Promise<T>;
 }
 
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   const response = await fetch(path, { method: "POST", body: formData });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await errorFromResponse(response);
   return response.json() as Promise<T>;
 }
 
@@ -27,7 +39,7 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
  */
 export async function apiDownload(path: string, init: RequestInit = { method: "POST" }): Promise<void> {
   const response = await fetch(path, init);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await errorFromResponse(response);
   const blob = await response.blob();
   const disposition = response.headers.get("content-disposition") ?? "";
   const match = /filename="?([^"]+)"?/.exec(disposition);
