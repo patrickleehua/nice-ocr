@@ -11,8 +11,7 @@ const STEP = 0.25;
 const clampZoom = (value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
 
 /**
- * 原图查看器：缩放（按钮 / Ctrl+滚轮）+ 拖拽平移（放大后按住拖动）。
- * 拖拽通过滚动容器的 scrollLeft/Top 实现，缩放 >1 时显示 grab 光标。
+ * 原图查看器：缩放（按钮 / Ctrl+滚轮）+ 在透明画布内自由拖拽平移。
  */
 export function ImageViewer({
   src,
@@ -27,35 +26,38 @@ export function ImageViewer({
   const [error, setError] = useState(false);
   const [panning, setPanning] = useState(false);
   const [prevSrc, setPrevSrc] = useState(src);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
   // 切换图片时重置缩放与错误态（渲染期同步调整，避免 effect 级联渲染）。
   if (src !== prevSrc) {
     setPrevSrc(src);
     setZoom(1);
+    setPan({ x: 0, y: 0 });
     setError(false);
   }
 
-  const canPan = zoom > 1;
+  const canPan = Boolean(src && !error);
 
   function onPointerDown(event: React.PointerEvent) {
-    const el = scrollRef.current;
+    const el = canvasRef.current;
     if (!el || !canPan) return;
-    drag.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, top: el.scrollTop };
+    drag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
     setPanning(true);
     el.setPointerCapture(event.pointerId);
   }
 
   function onPointerMove(event: React.PointerEvent) {
-    const el = scrollRef.current;
-    if (!drag.current || !el) return;
-    el.scrollLeft = drag.current.left - (event.clientX - drag.current.x);
-    el.scrollTop = drag.current.top - (event.clientY - drag.current.y);
+    if (!drag.current) return;
+    setPan({
+      x: drag.current.panX + event.clientX - drag.current.x,
+      y: drag.current.panY + event.clientY - drag.current.y,
+    });
   }
 
   function endPan(event: React.PointerEvent) {
-    const el = scrollRef.current;
+    const el = canvasRef.current;
     drag.current = null;
     setPanning(false);
     if (el?.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
@@ -83,7 +85,10 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="适应窗口"
-          onClick={() => setZoom(1)}
+          onClick={() => {
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+          }}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <Maximize2 size={15} />
@@ -93,9 +98,9 @@ export function ImageViewer({
       </div>
 
       <div
-        ref={scrollRef}
+        ref={canvasRef}
         className={cn(
-          "min-h-0 flex-1 overflow-auto bg-muted p-4",
+          "relative min-h-0 flex-1 overflow-hidden bg-muted",
           canPan ? (panning ? "cursor-grabbing" : "cursor-grab") : "cursor-default",
         )}
         onPointerDown={onPointerDown}
@@ -110,10 +115,10 @@ export function ImageViewer({
       >
         {src && !error ? (
           <div
-            className={cn(
-              "flex min-h-full min-w-full items-start",
-              canPan ? "justify-start" : "justify-center",
-            )}
+            className="pointer-events-none absolute inset-4 flex items-center justify-center"
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px)`,
+            }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -121,13 +126,15 @@ export function ImageViewer({
               src={src}
               alt={alt}
               draggable={false}
-              style={{ width: `${zoom * 100}%`, maxWidth: zoom <= 1 ? "100%" : "none" }}
-              className="h-auto shrink-0 select-none rounded border border-border bg-white object-contain shadow-sm"
+              style={{
+                transform: `scale(${zoom})`,
+              }}
+              className="max-h-full max-w-full select-none rounded border border-border bg-white object-contain shadow-sm"
               onError={() => setError(true)}
             />
           </div>
         ) : (
-          <div className="flex min-h-full min-w-full items-center justify-center">
+          <div className="flex h-full w-full items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-muted-foreground">
               <ImageOff size={28} />
               <span className="text-xs">原图不可用（未上传或文件缺失）</span>
