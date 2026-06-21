@@ -6,14 +6,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
-import { BatchStatusBadge, RiskBadge } from "@/components/ui/status";
+import { RiskBadge } from "@/components/ui/status";
 import { SourceBadge } from "@/components/ui/source-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { ExportMenu } from "@/components/results/export-menu";
+import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { cn, formatDateTime } from "@/lib/utils";
 import { apiGet, apiJson, apiUpload } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
-import type { BatchStatus, RiskLevel } from "@/lib/types";
+import type { RiskLevel } from "@/lib/types";
 
 interface ApiDoc {
   id: string;
@@ -91,17 +92,12 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
         }}
       />
 
+      <BatchWorkspaceNav batchId={batchId} active="overview" />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Link href="/batches" className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary">
-            <ChevronLeft size={14} />
-            返回批次
-          </Link>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold">{batch?.name ?? (isLoading ? "加载中..." : "批次不存在")}</h1>
-            {batch ? <BatchStatusBadge status={batch.status as BatchStatus} /> : null}
-          </div>
-        </div>
+        <Link href="/batches" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary">
+          <ChevronLeft size={14} />
+          返回批次列表
+        </Link>
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
             <ExportMenu scope={{ batchId }} defaultTemplateId={batch?.exportTemplateId} />
@@ -165,7 +161,12 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                           <RotateCcw size={14} />重试
                         </Button>
                         <Button size="sm" variant="ghost" asChild>
-                          <Link href="/review" onClick={(event) => event.stopPropagation()}>审核</Link>
+                          <Link
+                            href={`/review?batchId=${batchId}&documentId=${doc.id}`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            审核
+                          </Link>
                         </Button>
                       </div>
                     </td>

@@ -1,7 +1,8 @@
 "use client";
 
-import { Filter, RotateCcw, Trash2 } from "lucide-react";
+import { Filter, RotateCcw, Trash2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { FieldCell } from "@/components/ui/field-cell";
 import { ExportMenu } from "@/components/results/export-menu";
+import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
@@ -129,6 +131,8 @@ export function ResultsPage() {
     risk: "",
     audit: searchParams.get("audit") ?? "",
     name: searchParams.get("name") ?? "",
+    // 从批次工作区进入时携带 ?batchId=，把全局结果收窄为该批次视图。
+    batchId: searchParams.get("batchId") ?? "",
   });
   // 行级多选：按 id 跨页保留；选中时导出仅这些行（scope.rowIds），否则按当前筛选。
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -139,6 +143,7 @@ export function ResultsPage() {
 
   const queryString = (() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+    if (filters.batchId) params.set("batchId", filters.batchId);
     if (filters.status) params.set("status", filters.status);
     if (filters.risk) params.set("risk", filters.risk);
     if (filters.audit) params.set("auditState", filters.audit);
@@ -183,7 +188,7 @@ export function ResultsPage() {
   const exportScope: ExportScope =
     selectedCount > 0
       ? { rowIds: [...selectedIds] }
-      : { status: filters.status, risk: filters.risk, auditState: filters.audit, name: filters.name };
+      : { batchId: filters.batchId, status: filters.status, risk: filters.risk, auditState: filters.audit, name: filters.name };
 
   const updateRow = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
@@ -234,6 +239,7 @@ export function ResultsPage() {
 
   return (
     <div className="space-y-4">
+      {filters.batchId ? <BatchWorkspaceNav batchId={filters.batchId} active="results" /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">全部结果</h1>
@@ -290,6 +296,14 @@ export function ResultsPage() {
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Filter size={14} />共 {total} 条
           </span>
+          {filters.batchId ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs text-primary">
+              批次：{rows[0]?.batchName ?? filters.batchId}
+              <button aria-label="清除批次筛选" className="hover:text-primary-hover" onClick={() => patchFilter({ batchId: "" })}>
+                <X size={12} />
+              </button>
+            </span>
+          ) : null}
           {selectedCount > 0 ? (
             <span className="inline-flex items-center gap-2 text-xs text-foreground">
               已选 {selectedCount} 行
@@ -345,7 +359,11 @@ export function ResultsPage() {
                     />
                   </td>
                   <td className={tableCellClass}>{(page - 1) * PAGE_SIZE + index + 1}</td>
-                  <td className={tableCellClass}>{row.batchName}</td>
+                  <td className={tableCellClass}>
+                    <Link href={`/batches/${row.batchId}`} className="text-primary hover:underline">
+                      {row.batchName}
+                    </Link>
+                  </td>
                   <td className={tableCellClass}>{row.documentName}</td>
                   <td className={tableCellClass}>{row.month || "-"}</td>
                   {fields.map((field) => (
@@ -369,6 +387,16 @@ export function ResultsPage() {
                   <td className={tableCellClass}><ReasonList codes={row.riskReasons ?? []} emptyText="-" /></td>
                   <td className={tableCellClass}>
                     <div className="flex gap-1">
+                      {row.status !== "confirmed" || row.auditState === "flagged" ? (
+                        <Button size="sm" variant="ghost" asChild>
+                          <Link
+                            href={`/review?batchId=${row.batchId}&documentId=${row.documentId}`}
+                            title="到审核台查看原图并逐行复核"
+                          >
+                            审核
+                          </Link>
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="secondary"

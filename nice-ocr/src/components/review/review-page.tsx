@@ -2,6 +2,7 @@
 
 import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,7 @@ import { ModelErrorNote, ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { FieldCell } from "@/components/ui/field-cell";
 import { ImageViewer } from "@/components/ui/image-viewer";
+import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
 import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
@@ -115,8 +117,12 @@ const DOC_PAGE_SIZE = 8;
 
 export function ReviewPage() {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const batchIdParam = searchParams.get("batchId");
+  const documentIdParam = searchParams.get("documentId");
   const [riskOpen, setRiskOpen] = useState(false);
-  const [override, setOverride] = useState<string | null>(null);
+  // 进入审核台时若带 ?documentId= 则直接定位该文档（来自批次详情/结果页/仪表盘的直达跳转）。
+  const [override, setOverride] = useState<string | null>(documentIdParam);
   const [docSearch, setDocSearch] = useState("");
   const [docFilter, setDocFilter] = useState<ReviewState | "all">("all");
   const [docPage, setDocPage] = useState(1);
@@ -134,7 +140,8 @@ export function ReviewPage() {
     queryKey: ["batches"],
     queryFn: () => apiGet(apiPaths.batches),
   });
-  const activeBatchId = batchData?.batches[0]?.id;
+  // 优先用 URL 携带的 batchId（保持调用方上下文），否则回退到最近批次。
+  const activeBatchId = batchIdParam ?? batchData?.batches[0]?.id;
 
   const { data: batchDetail } = useQuery<BatchDetail>({
     queryKey: ["batch", activeBatchId],
@@ -294,6 +301,7 @@ export function ReviewPage() {
 
   return (
     <div className="space-y-4">
+      {!focus && batchIdParam ? <BatchWorkspaceNav batchId={batchIdParam} active="review" /> : null}
       {focus ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2">
           <div className="flex min-w-0 items-center gap-3">
@@ -356,6 +364,7 @@ export function ReviewPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold">审核工作台</h1>
+              {batchDetail ? <span className="text-sm text-muted-foreground">· {batchDetail.batch.name}</span> : null}
               {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">左侧选择文件、中间查看原图（可缩放/拖拽）、右侧点击单元格直接修改识别结果。</p>
