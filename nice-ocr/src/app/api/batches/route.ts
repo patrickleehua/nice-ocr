@@ -31,7 +31,31 @@ export async function GET(request: Request) {
     }),
     prisma.batch.count({ where }),
   ]);
-  return NextResponse.json({ batches, total, page, pageSize });
+
+  // 按批次聚合行级状态，供列表展示审核进度（已确认/总行/冲突）。一次 groupBy 覆盖当前页全部批次。
+  const batchIds = batches.map((batch) => batch.id);
+  const grouped = batchIds.length
+    ? await prisma.recognitionRow.groupBy({
+        by: ["batchId", "status"],
+        where: { batchId: { in: batchIds }, deletedAt: null },
+        _count: { _all: true },
+      })
+    : [];
+  const progressMap = new Map<string, { total: number; confirmed: number; conflict: number }>();
+  for (const entry of grouped) {
+    const progress = progressMap.get(entry.batchId) ?? { total: 0, confirmed: 0, conflict: 0 };
+    const count = entry._count._all;
+    progress.total += count;
+    if (entry.status === "confirmed") progress.confirmed += count;
+    if (entry.status === "conflict") progress.conflict += count;
+    progressMap.set(entry.batchId, progress);
+  }
+  const withProgress = batches.map((batch) => ({
+    ...batch,
+    progress: progressMap.get(batch.id) ?? { total: 0, confirmed: 0, conflict: 0 },
+  }));
+
+  return NextResponse.json({ batches: withProgress, total, page, pageSize });
 }
 
 const batchCreateSchema = z.object({

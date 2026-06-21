@@ -22,6 +22,7 @@ interface ApiBatch {
   approvalMode: string;
   createdAt: string;
   _count?: { documents: number; rows: number };
+  progress?: { total: number; confirmed: number; conflict: number };
 }
 
 interface SettingsForBatchCreate {
@@ -158,6 +159,7 @@ export function BatchesPage() {
               <th className={tableCellClass}>状态</th>
               <th className={tableCellClass}>文档数</th>
               <th className={tableCellClass}>行数</th>
+              <th className={tableCellClass}>审核进度</th>
               <th className={tableCellClass}>审批模式</th>
               <th className={tableCellClass}>策略</th>
               <th className={tableCellClass}>创建时间</th>
@@ -179,6 +181,7 @@ export function BatchesPage() {
                   <td className={tableCellClass}><BatchStatusBadge status={batch.status as BatchStatus} /></td>
                   <td className={tableCellClass}>{formatNumber(batch._count?.documents ?? 0)}</td>
                   <td className={tableCellClass}>{formatNumber(batch._count?.rows ?? 0)}</td>
+                  <td className={tableCellClass}><BatchProgressCell progress={batch.progress} /></td>
                   <td className={tableCellClass}><ApprovalModeBadge mode={batch.approvalMode} /></td>
                   <td className={tableCellClass}>{batch.strategy}</td>
                   <td className={tableCellClass}>{formatDateTime(batch.createdAt)}</td>
@@ -202,7 +205,7 @@ export function BatchesPage() {
               ))
             ) : (
               <tr>
-                <td className={tableCellClass} colSpan={8}>
+                <td className={tableCellClass} colSpan={9}>
                   <span className="text-muted-foreground">{isLoading ? "加载中..." : "暂无批次，点击右上角新建批次"}</span>
                 </td>
               </tr>
@@ -218,6 +221,24 @@ export function BatchesPage() {
         providers={settings?.providers ?? []}
         onSubmit={(payload) => createBatch.mutate(payload)}
       />
+    </div>
+  );
+}
+
+/** 批次审核进度：已确认行 / 总行的小进度条；无行时显示占位符。 */
+function BatchProgressCell({ progress }: { progress?: { total: number; confirmed: number; conflict: number } }) {
+  const total = progress?.total ?? 0;
+  const confirmed = progress?.confirmed ?? 0;
+  if (total === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  const pct = Math.round((confirmed / total) * 100);
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+        <span className="block h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {formatNumber(confirmed)}/{formatNumber(total)}
+      </span>
     </div>
   );
 }
