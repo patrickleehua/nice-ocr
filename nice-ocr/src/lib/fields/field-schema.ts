@@ -120,6 +120,28 @@ export function getMetaFields(): FieldDef[] {
   return Object.values(META_FIELD_CATALOG);
 }
 
+/** 跨场景公共核心识别列（所有场景共有），用于混场景「全部」视图退化展示。 */
+export const COMMON_CORE_FIELD_KEYS = ["code", "name", "unit", "qty", "price", "amount", "remark"] as const;
+
+/** 公共核心识别字段定义（有序）：混场景结果表退化为这组安全交集列。 */
+export function getCommonCoreFields(): FieldDef[] {
+  return COMMON_CORE_FIELD_KEYS.map((key) => RECOGNITION_FIELD_CATALOG[key]);
+}
+
+/** 归一一组（可能为空/未知）场景 id 为去重的有效场景 id（无效回退默认场景），保持稳定顺序。 */
+export function distinctScenarioIds(ids: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of ids) {
+    const normalized = id && SCENARIOS[id] ? id : DEFAULT_SCENARIO_ID;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
 /** 合并查找任意字段定义（识别字段 + 元字段 + 场景 extra） */
 export function findFieldDef(id: string | null | undefined, key: string): FieldDef | undefined {
   return (

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { createRecognitionRow } from "@/lib/workflows/rows";
+import { distinctScenarioIds } from "@/lib/fields/field-schema";
 import { handleRoute, notFound, parseJson } from "@/lib/api/http";
 
 export const runtime = "nodejs";
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
       ...(searchParams.get("name") ? { name: { contains: searchParams.get("name") as string } } : {}),
     };
 
-    const [rows, total] = await Promise.all([
+    const [rows, total, scopeBatches] = await Promise.all([
       prisma.recognitionRow.findMany({
         where,
         // 稳定排序：createdAt 不随编辑变化，编辑后行不会跳到列表顶部（避免页面抖动）。
@@ -32,9 +33,17 @@ export async function GET(request: Request) {
         include: { document: true, batch: true },
       }),
       prisma.recognitionRow.count({ where }),
+      // 整个过滤结果集涉及的去重批次（含场景），驱动「全部」视图的混场景列退化判断。
+      prisma.recognitionRow.findMany({
+        where,
+        distinct: ["batchId"],
+        select: { batch: { select: { scenarioId: true } } },
+      }),
     ]);
 
-    return NextResponse.json({ rows, total, page, pageSize });
+    const scenarioIds = distinctScenarioIds(scopeBatches.map((row) => row.batch.scenarioId));
+
+    return NextResponse.json({ rows, total, page, pageSize, scenarioIds });
   });
 }
 

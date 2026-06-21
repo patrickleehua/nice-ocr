@@ -17,6 +17,7 @@ export const apiPaths = {
   rows: "/api/rows",
   row: (id: string) => `/api/rows/${id}`,
   rowsBulkConfirm: "/api/rows/bulk-confirm",
+  documents: "/api/documents",
   document: (id: string) => `/api/documents/${id}`,
   documentImage: (id: string) => `/api/documents/${id}/image`,
   documentRetry: (id: string) => `/api/documents/${id}/retry`,

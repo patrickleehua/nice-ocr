@@ -1,6 +1,6 @@
 "use client";
 
-import { Filter, RotateCcw, Trash2, X } from "lucide-react";
+import { Filter, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -12,7 +12,8 @@ import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/componen
 import { FieldCell } from "@/components/ui/field-cell";
 import { ExportMenu } from "@/components/results/export-menu";
 import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
-import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
+import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
+import { DEFAULT_SCENARIO_ID, getCommonCoreFields, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
@@ -47,6 +48,8 @@ interface RowsPage {
   rows: ApiRecognitionRow[];
   total: number;
   page: number;
+  /** 当前过滤结果集涉及的去重场景；驱动「全部」视图的混场景列退化。 */
+  scenarioIds?: string[];
 }
 
 function safeParseObject(raw?: string | null): Record<string, string> {
@@ -125,25 +128,29 @@ const PAGE_SIZE = 50;
 export function ResultsPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  // 作用域单一事实源：URL ?batchId=（空=全部）；其余筛选为页面本地状态。
+  const batchId = searchParams.get("batchId") ?? "";
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     status: "",
     risk: "",
     audit: searchParams.get("audit") ?? "",
     name: searchParams.get("name") ?? "",
-    // 从批次工作区进入时携带 ?batchId=，把全局结果收窄为该批次视图。
-    batchId: searchParams.get("batchId") ?? "",
   });
   // 行级多选：按 id 跨页保留；选中时导出仅这些行（scope.rowIds），否则按当前筛选。
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
-  const fieldSchema = useFieldSchema();
-  // 加载前用默认场景字段兜底，避免初次渲染列结构跳变。
-  const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
+  // 切换作用域（批次）时回到第一页并清空跨批次失效的多选（render 阶段调整，优于 effect）。
+  const [prevBatchId, setPrevBatchId] = useState(batchId);
+  if (prevBatchId !== batchId) {
+    setPrevBatchId(batchId);
+    setPage(1);
+    setSelectedIds(new Set());
+  }
 
   const queryString = (() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-    if (filters.batchId) params.set("batchId", filters.batchId);
+    if (batchId) params.set("batchId", batchId);
     if (filters.status) params.set("status", filters.status);
     if (filters.risk) params.set("risk", filters.risk);
     if (filters.audit) params.set("auditState", filters.audit);
@@ -159,6 +166,25 @@ export function ResultsPage() {
   const rows = data?.rows?.map(toRecognitionRow) ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // 隔离模式额外取批次信息，导出默认带其绑定模板（与批次详情页一致）。共用 ["batch", id] 缓存。
+  const { data: batchInfo } = useQuery<{ batch: { exportTemplateId?: string | null } }>({
+    queryKey: ["batch", batchId],
+    queryFn: () => apiGet(apiPaths.batch(batchId)),
+    enabled: Boolean(batchId),
+  });
+
+  // 列解析（D5/D6）：隔离→批次场景；全部→单场景用该场景列、多场景退化为公共核心列并提示。
+  const scenarioIds = data?.scenarioIds ?? [];
+  const mixedScenarios = !batchId && scenarioIds.length > 1;
+  const fieldScope = batchId
+    ? { batchId }
+    : scenarioIds.length === 1
+      ? { scenarioId: scenarioIds[0] }
+      : undefined;
+  const fieldSchema = useFieldSchema(fieldScope);
+  // 加载前用默认场景字段兜底，避免初次渲染列结构跳变。
+  const fields = mixedScenarios ? getCommonCoreFields() : fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
 
   const pageRowIds = rows.map((row) => row.id);
   const allPageSelected = pageRowIds.length > 0 && pageRowIds.every((id) => selectedIds.has(id));
@@ -188,7 +214,7 @@ export function ResultsPage() {
   const exportScope: ExportScope =
     selectedCount > 0
       ? { rowIds: [...selectedIds] }
-      : { batchId: filters.batchId, status: filters.status, risk: filters.risk, auditState: filters.audit, name: filters.name };
+      : { batchId, status: filters.status, risk: filters.risk, auditState: filters.audit, name: filters.name };
 
   const updateRow = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
@@ -239,7 +265,7 @@ export function ResultsPage() {
 
   return (
     <div className="space-y-4">
-      {filters.batchId ? <BatchWorkspaceNav batchId={filters.batchId} active="results" /> : null}
+      {batchId ? <BatchWorkspaceNav batchId={batchId} active="results" /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">全部结果</h1>
@@ -249,12 +275,13 @@ export function ResultsPage() {
           <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
             <RotateCcw size={15} />重建产品库
           </Button>
-          <ExportMenu scope={exportScope} />
+          <ExportMenu scope={exportScope} defaultTemplateId={batchInfo?.batch.exportTemplateId} />
         </div>
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-3">
         <div className="flex flex-wrap items-center gap-2">
+          <BatchScopeSelect batchId={batchId} />
           <select
             className="h-9 rounded-md border border-border bg-surface px-3 text-sm"
             value={filters.status}
@@ -296,14 +323,6 @@ export function ResultsPage() {
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Filter size={14} />共 {total} 条
           </span>
-          {filters.batchId ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs text-primary">
-              批次：{rows[0]?.batchName ?? filters.batchId}
-              <button aria-label="清除批次筛选" className="hover:text-primary-hover" onClick={() => patchFilter({ batchId: "" })}>
-                <X size={12} />
-              </button>
-            </span>
-          ) : null}
           {selectedCount > 0 ? (
             <span className="inline-flex items-center gap-2 text-xs text-foreground">
               已选 {selectedCount} 行
@@ -314,6 +333,12 @@ export function ResultsPage() {
           ) : null}
         </div>
       </div>
+
+      {mixedScenarios ? (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+          当前为多场景混合视图，仅显示公共核心列；选择具体批次可查看该场景完整字段列。
+        </div>
+      ) : null}
 
       <TableWrap>
         <DataTable>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
+import { Boxes, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -13,6 +13,7 @@ import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table
 import { FieldCell } from "@/components/ui/field-cell";
 import { ImageViewer } from "@/components/ui/image-viewer";
 import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
+import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
 import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
 import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
@@ -81,21 +82,15 @@ interface ApiDocument {
 
 type ReviewState = "pending" | "partial" | "confirmed" | "conflict";
 
-interface BatchDoc {
+/** 跨批次审核待办文档（/api/documents 返回项）：每条标注所属批次。 */
+interface WorklistDoc {
   id: string;
   originalName: string;
+  batchId: string;
+  batchName: string;
   riskLevel: RiskLevel;
   reviewState: ReviewState;
   rowStats: { total: number; confirmed: number; conflict: number };
-}
-
-interface BatchDetail {
-  batch: {
-    id: string;
-    name: string;
-    approvalMode: string;
-    documents: BatchDoc[];
-  };
 }
 
 const docStateBadge: Record<ReviewState, { label: string; tone: "warning" | "info" | "success" | "danger" }> = {
@@ -118,6 +113,7 @@ const DOC_PAGE_SIZE = 8;
 export function ReviewPage() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
+  // 作用域单一事实源：URL ?batchId=（null=全部跨批次待办）。
   const batchIdParam = searchParams.get("batchId");
   const documentIdParam = searchParams.get("documentId");
   const [riskOpen, setRiskOpen] = useState(false);
@@ -132,26 +128,49 @@ export function ReviewPage() {
   // 新增草稿行：undefined=无草稿；null=末尾追加；string=在该行下方插入。
   const [draftAfterId, setDraftAfterId] = useState<string | null | undefined>(undefined);
 
+  // 作用域随 URL 切换时同步选中文档：带 documentId 深链则定位之，否则回到列表首项（清空旧批次的陈旧选中）。
+  // render 阶段调整状态，优于 effect：避免跨批次陈旧 documentId 的一帧闪烁。
+  const urlScopeKey = `${batchIdParam ?? ""}|${documentIdParam ?? ""}`;
+  const [prevScopeKey, setPrevScopeKey] = useState(urlScopeKey);
+  if (prevScopeKey !== urlScopeKey) {
+    setPrevScopeKey(urlScopeKey);
+    setOverride(documentIdParam);
+  }
+
   function selectDoc(id: string) {
     setOverride(id);
   }
 
-  const { data: batchData } = useQuery<{ batches: Array<{ id: string }> }>({
-    queryKey: ["batches"],
-    queryFn: () => apiGet(apiPaths.batches),
+  // 跨批次/单批次文档待办列表（审核数据通路）：无 batchId=全部，带 batchId=隔离到该批次。
+  const { data: docList } = useQuery<{ documents: WorklistDoc[] }>({
+    queryKey: ["documents", batchIdParam ?? "all"],
+    queryFn: () => apiGet(batchIdParam ? `${apiPaths.documents}?batchId=${batchIdParam}` : apiPaths.documents),
   });
-  // 优先用 URL 携带的 batchId（保持调用方上下文），否则回退到最近批次。
-  const activeBatchId = batchIdParam ?? batchData?.batches[0]?.id;
+  const documents = useMemo(() => docList?.documents ?? [], [docList]);
 
-  const { data: batchDetail } = useQuery<BatchDetail>({
-    queryKey: ["batch", activeBatchId],
-    queryFn: () => apiGet(apiPaths.batch(activeBatchId as string)),
-    enabled: Boolean(activeBatchId),
+  // 隔离模式取批次头信息（名称/审批模式）；全部模式无单一批次。
+  const { data: batchDetail } = useQuery<{ batch: { id: string; name: string; approvalMode: string } }>({
+    queryKey: ["batch", batchIdParam],
+    queryFn: () => apiGet(apiPaths.batch(batchIdParam as string)),
+    enabled: Boolean(batchIdParam),
   });
 
-  const documents = useMemo(() => batchDetail?.batch.documents ?? [], [batchDetail]);
+  const filteredDocs = useMemo(
+    () =>
+      documents.filter((doc) => {
+        const matchesSearch = docSearch ? doc.originalName.toLowerCase().includes(docSearch.toLowerCase()) : true;
+        const matchesFilter = docFilter === "all" ? true : doc.reviewState === docFilter;
+        return matchesSearch && matchesFilter;
+      }),
+    [documents, docSearch, docFilter],
+  );
+
   const selectedId = override ?? documents[0]?.id ?? null;
-  const selectedIndex = documents.findIndex((doc) => doc.id === selectedId);
+  const selectedDoc = documents.find((doc) => doc.id === selectedId) ?? null;
+  // 导航在「当前过滤列表」内迭代（全部/隔离统一）。
+  const selectedIndex = filteredDocs.findIndex((doc) => doc.id === selectedId);
+  // 列与审核动作按所选文档所属批次解析（全部模式每文档单场景，无错位）。
+  const activeDocBatchId = selectedDoc?.batchId ?? batchIdParam ?? undefined;
 
   const { data: docData, isLoading } = useQuery<{ document: ApiDocument }>({
     queryKey: ["document", selectedId],
@@ -162,13 +181,14 @@ export function ReviewPage() {
   const document = docData?.document;
   const rows = document?.rows ?? [];
 
-  const fieldSchema = useFieldSchema();
+  const fieldSchema = useFieldSchema({ batchId: activeDocBatchId });
   // 加载前用默认场景字段兜底，避免列结构跳变。
   const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
-    queryClient.invalidateQueries({ queryKey: ["batch", activeBatchId] });
+    queryClient.invalidateQueries({ queryKey: ["documents"] });
+    if (selectedDoc?.batchId) queryClient.invalidateQueries({ queryKey: ["batch", selectedDoc.batchId] });
     queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
@@ -227,8 +247,9 @@ export function ReviewPage() {
     updateRow.mutate({ id, patch });
   }
 
+  // 运行审核是批次级动作：作用于当前所选文档所属批次（全部/隔离统一）。
   const runAudit = useMutation({
-    mutationFn: () => apiJson(apiPaths.batchAudit(activeBatchId as string), { method: "POST" }),
+    mutationFn: () => apiJson(apiPaths.batchAudit(activeDocBatchId as string), { method: "POST" }),
     onSuccess: invalidate,
   });
 
@@ -247,7 +268,7 @@ export function ReviewPage() {
 
   function goTo(offset: number) {
     if (selectedIndex < 0) return;
-    const next = documents[selectedIndex + offset];
+    const next = filteredDocs[selectedIndex + offset];
     if (next) selectDoc(next.id);
   }
 
@@ -265,28 +286,31 @@ export function ReviewPage() {
       if (typing) return;
       if (event.key === "ArrowLeft" && selectedIndex > 0) {
         event.preventDefault();
-        setOverride(documents[selectedIndex - 1].id);
-      } else if (event.key === "ArrowRight" && selectedIndex < documents.length - 1) {
+        setOverride(filteredDocs[selectedIndex - 1].id);
+      } else if (event.key === "ArrowRight" && selectedIndex < filteredDocs.length - 1) {
         event.preventDefault();
-        setOverride(documents[selectedIndex + 1].id);
+        setOverride(filteredDocs[selectedIndex + 1].id);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [focus, selectedIndex, documents]);
+  }, [focus, selectedIndex, filteredDocs]);
 
-  if (!activeBatchId) {
-    return <EmptyState message="暂无批次，请先创建批次并上传单据。" />;
-  }
+  const isAllScope = !batchIdParam;
+
   if (!documents.length) {
-    return <EmptyState message="当前批次还没有文档，请先上传单据。" />;
+    return (
+      <EmptyState
+        batchId={batchIdParam ?? ""}
+        message={
+          isAllScope
+            ? "暂无待审文档。请先创建批次并上传单据。"
+            : "当前批次还没有文档，请先上传单据，或切换到「全部」查看其他批次。"
+        }
+      />
+    );
   }
 
-  const filteredDocs = documents.filter((doc) => {
-    const matchesSearch = docSearch ? doc.originalName.toLowerCase().includes(docSearch.toLowerCase()) : true;
-    const matchesFilter = docFilter === "all" ? true : doc.reviewState === docFilter;
-    return matchesSearch && matchesFilter;
-  });
   const docTotalPages = Math.max(1, Math.ceil(filteredDocs.length / DOC_PAGE_SIZE));
   const safeDocPage = Math.min(docPage, docTotalPages);
   const pagedDocs = filteredDocs.slice((safeDocPage - 1) * DOC_PAGE_SIZE, safeDocPage * DOC_PAGE_SIZE);
@@ -309,7 +333,7 @@ export function ReviewPage() {
               <Minimize2 size={15} />退出专注
             </Button>
             <span className="truncate text-sm font-medium">{document?.originalName ?? "单据"}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">{selectedIndex + 1} / {documents.length}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{selectedIndex + 1} / {filteredDocs.length}</span>
             {document ? (
               <button
                 type="button"
@@ -331,20 +355,20 @@ export function ReviewPage() {
               className="h-8 max-w-48 rounded-md border border-border bg-surface px-2 text-xs outline-none focus:border-primary"
               title="快速跳转文件"
             >
-              {documents.map((doc) => (
+              {filteredDocs.map((doc) => (
                 <option key={doc.id} value={doc.id}>
                   {doc.originalName}
                 </option>
               ))}
             </select>
-            <Button size="sm" variant="secondary" onClick={() => goTo(1)} disabled={selectedIndex >= documents.length - 1} title="下一张（→）">
+            <Button size="sm" variant="secondary" onClick={() => goTo(1)} disabled={selectedIndex >= filteredDocs.length - 1} title="下一张（→）">
               <ChevronRight size={15} />
             </Button>
             <Button
               size="sm"
               variant="secondary"
               onClick={() => runAudit.mutate()}
-              disabled={runAudit.isPending}
+              disabled={runAudit.isPending || !activeDocBatchId}
               title="对机器自动通过的行做二次复查（需 worker 运行）"
             >
               <ShieldCheck size={15} />运行审核
@@ -364,12 +388,17 @@ export function ReviewPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-semibold">审核工作台</h1>
-              {batchDetail ? <span className="text-sm text-muted-foreground">· {batchDetail.batch.name}</span> : null}
+              {batchDetail ? (
+                <span className="text-sm text-muted-foreground">· {batchDetail.batch.name}</span>
+              ) : (
+                <span className="text-sm text-muted-foreground">· 全部批次待办</span>
+              )}
               {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">左侧选择文件、中间查看原图（可缩放/拖拽）、右侧点击单元格直接修改识别结果。</p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <BatchScopeSelect batchId={batchIdParam ?? ""} />
             <Button size="sm" variant="secondary" onClick={() => setFocus(true)} title="进入专注模式：放大原图与明细、隐藏次要面板，←/→ 切换单据">
               <Maximize2 size={15} />专注模式
             </Button>
@@ -380,7 +409,7 @@ export function ReviewPage() {
               size="sm"
               variant="secondary"
               onClick={() => goTo(1)}
-              disabled={selectedIndex < 0 || selectedIndex >= documents.length - 1}
+              disabled={selectedIndex < 0 || selectedIndex >= filteredDocs.length - 1}
             >
               下一张<ChevronRight size={15} />
             </Button>
@@ -388,8 +417,8 @@ export function ReviewPage() {
               size="sm"
               variant="secondary"
               onClick={() => runAudit.mutate()}
-              disabled={runAudit.isPending}
-              title="对本批次机器自动通过的行做二次复查（需 worker 运行）"
+              disabled={runAudit.isPending || !activeDocBatchId}
+              title="对当前单据所属批次机器自动通过的行做二次复查（需 worker 运行）"
             >
               <ShieldCheck size={15} />运行审核
             </Button>
@@ -468,6 +497,13 @@ export function ReviewPage() {
                       <span className="truncate text-xs font-medium">{doc.originalName}</span>
                       <Badge tone={badge.tone}>{badge.label}</Badge>
                     </div>
+                    {/* 全部模式标注所属批次（收件箱式来源标签）；隔离模式同批次无需重复。 */}
+                    {isAllScope ? (
+                      <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <Boxes size={11} className="shrink-0" />
+                        <span className="truncate">{doc.batchName}</span>
+                      </div>
+                    ) : null}
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                       <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
                       <RiskBadge risk={doc.riskLevel} />
@@ -712,10 +748,13 @@ export function ReviewPage() {
   );
 }
 
-function EmptyState({ message }: { message: string }) {
+function EmptyState({ batchId, message }: { batchId: string; message: string }) {
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">审核工作台</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">审核工作台</h1>
+        <BatchScopeSelect batchId={batchId} />
+      </div>
       <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-16 text-center text-sm text-muted-foreground">
         {message}
       </div>
