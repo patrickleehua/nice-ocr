@@ -44,3 +44,18 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
 
   return NextResponse.json({ batch: { ...batch, documents } });
 }
+
+// 封批/撤销：{ closed: boolean } → 写入/清除 closedAt（审核收口标记，不改 status）。
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const body = (await request.json().catch(() => ({}))) as { closed?: boolean };
+  const existing = await prisma.batch.findUnique({ where: { id }, select: { id: true } });
+  if (!existing) {
+    return NextResponse.json({ error: "Batch not found" }, { status: 404 });
+  }
+  const batch = await prisma.batch.update({
+    where: { id },
+    data: { closedAt: body.closed ? new Date() : null },
+  });
+  return NextResponse.json({ batch });
+}

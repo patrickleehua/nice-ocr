@@ -21,6 +21,8 @@ model Batch {
   scenarioId           String?
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
+  // 审核收口/封批时间；null=未封批。独立字段，不复用 status，避免与识别流水线状态语义冲突。
+  closedAt             DateTime?
   documents            Document[]
   jobs                 RecognitionJob[]
   rows                 RecognitionRow[]

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft, ImageOff, RotateCcw, UploadCloud } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ImageOff, RotateCcw, UploadCloud } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,7 @@ interface BatchDetail {
     id: string;
     name: string;
     status: string;
+    closedAt?: string | null;
     exportTemplateId?: string | null;
     scenarioId?: string | null;
     documents: ApiDoc[];
@@ -70,6 +71,11 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
     mutationFn: (documentId: string) => apiJson(apiPaths.documentRetry(documentId), { method: "POST" }),
     onSuccess: invalidate,
   });
+  // 封批/撤销：写入或清除 closedAt（审核收口标记）。
+  const toggleClose = useMutation({
+    mutationFn: (closed: boolean) => apiJson(apiPaths.batch(batchId), { method: "PATCH", body: JSON.stringify({ closed }) }),
+    onSuccess: invalidate,
+  });
 
   const batch = data?.batch;
   const documents = batch?.documents ?? [];
@@ -100,6 +106,27 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
         </Link>
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-2">
+            {batch?.closedAt ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => toggleClose.mutate(false)}
+                disabled={toggleClose.isPending}
+                title={`已封批 ${formatDateTime(batch.closedAt)} · 点击撤销`}
+              >
+                <CheckCircle2 size={15} className="text-success-strong" />已封批 · 撤销
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => toggleClose.mutate(true)}
+                disabled={toggleClose.isPending || !documents.length}
+                title="标记本批次审核完成（收口）"
+              >
+                <CheckCircle2 size={15} />标记完成审核
+              </Button>
+            )}
             <ExportMenu scope={{ batchId }} defaultTemplateId={batch?.exportTemplateId} />
             <Button size="sm" variant="primary" onClick={() => fileInputRef.current?.click()} disabled={uploadFiles.isPending}>
               <UploadCloud size={15} />{uploadFiles.isPending ? "上传解析中..." : "上传文件"}

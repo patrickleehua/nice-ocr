@@ -15,6 +15,7 @@ interface NavBatch {
     id: string;
     name: string;
     status: string;
+    closedAt?: string | null;
     documents: Array<{
       reviewState: "pending" | "partial" | "confirmed" | "conflict";
       rowStats: { total: number; confirmed: number; conflict: number };
@@ -53,6 +54,11 @@ export function BatchWorkspaceNav({ batchId, active }: { batchId: string; active
         </Link>
         <span className="truncate text-sm font-medium">{batch?.name ?? "加载中…"}</span>
         {batch ? <BatchStatusBadge status={batch.status as BatchStatus} /> : null}
+        {batch?.closedAt ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-xs text-success-strong">
+            已封批
+          </span>
+        ) : null}
         {totalRows > 0 ? (
           <span className="hidden items-center gap-2 lg:flex">
             <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
