@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, ChevronLeft, ImageOff, RotateCcw, UploadCloud } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Eye, ImageOff, RotateCcw, UploadCloud } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
@@ -44,6 +45,7 @@ interface BatchDetail {
 }
 
 export function BatchDetailPage({ batchId }: { batchId: string }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [override, setOverride] = useState<string | null>(null);
@@ -81,6 +83,8 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
   const documents = batch?.documents ?? [];
   const selectedId = override ?? documents[0]?.id ?? null;
   const selected = documents.find((doc) => doc.id === selectedId) ?? null;
+  const reviewHref = (documentId: string) => `/review?batchId=${batchId}&documentId=${documentId}`;
+  const openReview = (documentId: string) => router.push(reviewHref(documentId));
 
   return (
     <div className="space-y-4">
@@ -165,9 +169,20 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                   <tr
                     key={doc.id}
                     className={`cursor-pointer hover:bg-muted/70 ${doc.id === selectedId ? "bg-muted/50" : ""}`}
-                    onClick={() => setOverride(doc.id)}
+                    onClick={() => openReview(doc.id)}
+                    title="查看原图并审核修改识别明细"
                   >
-                    <td className={tableCellClass}>{doc.originalName}</td>
+                    <td className={tableCellClass}>
+                      <Link
+                        href={reviewHref(doc.id)}
+                        onClick={(event) => event.stopPropagation()}
+                        className="inline-flex max-w-[260px] items-center gap-1.5 truncate font-medium text-primary hover:underline"
+                        title="查看原图并审核修改识别明细"
+                      >
+                        <Eye size={14} className="shrink-0" />
+                        <span className="truncate">{doc.originalName}</span>
+                      </Link>
+                    </td>
                     <td className={cn(tableCellClass, "max-w-[200px]")}>
                       <SourceBadge source={doc} />
                     </td>
@@ -176,6 +191,17 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                     <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
                     <td className={tableCellClass}>
                       <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOverride(doc.id);
+                          }}
+                          title="在右侧预览此文件"
+                        >
+                          预览
+                        </Button>
                         <Button
                           size="sm"
                           variant="secondary"
@@ -189,10 +215,11 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                         </Button>
                         <Button size="sm" variant="ghost" asChild>
                           <Link
-                            href={`/review?batchId=${batchId}&documentId=${doc.id}`}
+                            href={reviewHref(doc.id)}
                             onClick={(event) => event.stopPropagation()}
+                            title="查看原图并审核修改识别明细"
                           >
-                            审核
+                            <Eye size={14} />查看/审核
                           </Link>
                         </Button>
                       </div>
@@ -249,6 +276,13 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                 <div><dt className="text-xs text-muted-foreground">状态</dt><dd className="mt-1">{selected.status}</dd></div>
                 <div><dt className="text-xs text-muted-foreground">风险等级</dt><dd className="mt-1"><RiskBadge risk={selected.riskLevel} /></dd></div>
                 <div><dt className="text-xs text-muted-foreground">更新时间</dt><dd className="mt-1">{formatDateTime(selected.updatedAt)}</dd></div>
+                <div className="col-span-2">
+                  <Button size="sm" variant="primary" asChild>
+                    <Link href={reviewHref(selected.id)}>
+                      <Eye size={15} />查看/审核修改
+                    </Link>
+                  </Button>
+                </div>
               </dl>
             ) : null}
           </div>
