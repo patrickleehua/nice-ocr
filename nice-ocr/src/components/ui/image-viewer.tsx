@@ -95,7 +95,7 @@ export function ImageViewer({
       <div
         ref={scrollRef}
         className={cn(
-          "flex min-h-0 flex-1 items-start justify-center overflow-auto bg-muted p-4",
+          "min-h-0 flex-1 overflow-auto bg-muted p-4",
           canPan ? (panning ? "cursor-grabbing" : "cursor-grab") : "cursor-default",
         )}
         onPointerDown={onPointerDown}
@@ -109,20 +109,29 @@ export function ImageViewer({
         }}
       >
         {src && !error ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            key={src}
-            src={src}
-            alt={alt}
-            draggable={false}
-            style={{ width: `${zoom * 100}%`, maxWidth: zoom <= 1 ? "100%" : "none" }}
-            className="h-auto select-none rounded border border-border bg-white object-contain shadow-sm"
-            onError={() => setError(true)}
-          />
+          <div
+            className={cn(
+              "flex min-h-full min-w-full items-start",
+              canPan ? "justify-start" : "justify-center",
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              key={src}
+              src={src}
+              alt={alt}
+              draggable={false}
+              style={{ width: `${zoom * 100}%`, maxWidth: zoom <= 1 ? "100%" : "none" }}
+              className="h-auto shrink-0 select-none rounded border border-border bg-white object-contain shadow-sm"
+              onError={() => setError(true)}
+            />
+          </div>
         ) : (
-          <div className="flex flex-col items-center gap-2 self-center text-muted-foreground">
-            <ImageOff size={28} />
-            <span className="text-xs">原图不可用（未上传或文件缺失）</span>
+          <div className="flex min-h-full min-w-full items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <ImageOff size={28} />
+              <span className="text-xs">原图不可用（未上传或文件缺失）</span>
+            </div>
           </div>
         )}
       </div>
