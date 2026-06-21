@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock, FileImage, RefreshCw, Table2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileImage, RefreshCw, ShieldCheck, Table2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
 import { RiskBadge } from "@/components/ui/status";
@@ -29,6 +29,7 @@ interface DashboardSummary {
   activeBatch: { id: string; name: string; status: string; documents: number; rows: number } | null;
   recentFailures: Array<{
     id: string;
+    batchId: string;
     fileName: string;
     risk: RiskLevel;
     reasons: string[];
@@ -138,13 +139,17 @@ export function DashboardPage() {
           <PanelHeader>
             <PanelTitle>待处理风险</PanelTitle>
             <Button size="sm" variant="ghost" asChild>
-              <Link href="/review">进入审核</Link>
+              <Link href={data?.activeBatch ? `/review?batchId=${data.activeBatch.id}` : "/review"}>进入审核</Link>
             </Button>
           </PanelHeader>
           <div className="divide-y divide-border">
             {data?.topRisks.length ? (
               data.topRisks.map((risk) => (
-                <div key={risk.type} className="flex items-center justify-between gap-3 px-4 py-3">
+                <Link
+                  key={risk.type}
+                  href="/conflicts"
+                  className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/70"
+                >
                   <div>
                     <ReasonBadge code={risk.type} />
                     <div className="mt-1 text-xs text-muted-foreground">{risk.reason}</div>
@@ -153,7 +158,7 @@ export function DashboardPage() {
                     <RiskBadge risk={risk.severity} />
                     <span className="text-xs text-muted-foreground">{risk.count} 行</span>
                   </div>
-                </div>
+                </Link>
               ))
             ) : (
               <div className="px-4 py-6 text-sm text-muted-foreground">暂无未处理风险</div>
@@ -187,14 +192,21 @@ export function DashboardPage() {
                   </td>
                   <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
                   <td className={tableCellClass}>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => retry.mutate(doc.id)}
-                      disabled={retry.isPending}
-                    >
-                      重试
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" asChild>
+                        <Link href={`/review?batchId=${doc.batchId}&documentId=${doc.id}`} title="到审核台查看原图并复核">
+                          <ShieldCheck size={14} />审核
+                        </Link>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => retry.mutate(doc.id)}
+                        disabled={retry.isPending}
+                      >
+                        重试
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))

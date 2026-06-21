@@ -95,6 +95,7 @@ export async function GET() {
       : null,
     recentFailures: recentFailures.map((doc) => ({
       id: doc.id,
+      batchId: doc.batchId,
       fileName: doc.originalName,
       risk: doc.riskLevel,
       // 返回原因码数组交前端经规则字典渲染；无原因码时给出兜底文案。
