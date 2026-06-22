@@ -1,8 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import OpenAI from "openai";
-import { z } from "zod";
-import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { decryptSecret } from "@/lib/crypto/secret";
@@ -10,7 +7,9 @@ import { enforceRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
-const pingSchema = z.object({ ok: z.boolean() });
+/** 连通性测试发送的最小提示词：让模型回一句话即可，不约束结构化输出（最大化兼容第三方网关）。 */
+const PING_PROMPT = "hi";
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const limited = enforceRateLimit(request, "provider-test", 10, 60_000);
   if (limited) return limited;
@@ -41,30 +40,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const apiKey = decryptSecret(provider.apiKey);
   const started = Date.now();
   try {
+    let reply = "";
     if (provider.protocol === "openai_responses") {
       const client = new OpenAI({ apiKey, baseURL: provider.baseUrl || undefined });
-      const response = await client.responses.parse({
+      const response = await client.responses.create({
         model: model.modelId,
-        input: "Return {\"ok\":true}.",
-        max_output_tokens: 64,
-        text: { format: zodTextFormat(pingSchema, "settings_ping") },
+        input: PING_PROMPT,
+        max_output_tokens: 256,
       });
-      pingSchema.parse(response.output_parsed);
+      reply = response.output_text?.trim() ?? "";
     } else if (provider.protocol === "anthropic_messages") {
       const client = new Anthropic({ apiKey, baseURL: provider.baseUrl || undefined });
-      const response = await client.messages.parse({
+      const response = await client.messages.create({
         model: model.modelId,
-        max_tokens: 64,
-        messages: [{ role: "user", content: "Return {\"ok\":true}." }],
-        output_config: {
-          format: zodOutputFormat(pingSchema),
-        },
+        max_tokens: 256,
+        messages: [{ role: "user", content: PING_PROMPT }],
       });
-      pingSchema.parse(response.parsed_output);
+      reply = response.content
+        .filter((block): block is Anthropic.TextBlock => block.type === "text")
+        .map((block) => block.text)
+        .join("")
+        .trim();
     } else {
       throw new Error(`Unsupported protocol: ${provider.protocol}`);
     }
-    return NextResponse.json({ ok: true, latencyMs: Date.now() - started });
+    // 拿到 200 响应即视为连通；reply 为空也算连通（部分模型可能空回），但回传出去让用户自行判断。
+    return NextResponse.json({ ok: true, latencyMs: Date.now() - started, prompt: PING_PROMPT, reply });
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : String(error), latencyMs: Date.now() - started },

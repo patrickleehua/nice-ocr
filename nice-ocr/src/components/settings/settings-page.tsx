@@ -143,6 +143,14 @@ export function SettingsPage() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiJson<{ id: string }>(`/api/settings/providers/${id}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      setEditingKey(null);
+      await refetch();
+    },
+  });
+
   if (isLoading || !draft) {
     return <div className="text-sm text-muted-foreground">加载设置中...</div>;
   }
@@ -154,12 +162,21 @@ export function SettingsPage() {
           <h1 className="text-xl font-semibold">设置</h1>
           <p className="mt-1 text-sm text-muted-foreground">配置识别策略、AI provider、队列重试和校验规则。</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge tone={enabledCount > 0 ? "success" : "danger"}>{enabledCount} 个启用</Badge>
-          <Badge tone={enabledModelCount > 0 ? "success" : "danger"}>{enabledModelCount} 个模型</Badge>
-          <Button size="sm" variant="primary" onClick={() => saveMutation.mutate(draft)} disabled={saveMutation.isPending}>
-            <Save size={15} />保存设置
-          </Button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2">
+            <Badge tone={enabledCount > 0 ? "success" : "danger"}>{enabledCount} 个启用</Badge>
+            <Badge tone={enabledModelCount > 0 ? "success" : "danger"}>{enabledModelCount} 个模型</Badge>
+            <Button size="sm" variant="primary" onClick={() => saveMutation.mutate(draft)} disabled={saveMutation.isPending}>
+              <Save size={15} />{saveMutation.isPending ? "保存中..." : "保存设置"}
+            </Button>
+          </div>
+          {saveMutation.isError ? (
+            <span className="text-xs text-danger">
+              保存失败：{saveMutation.error instanceof Error ? saveMutation.error.message : String(saveMutation.error)}
+            </span>
+          ) : saveMutation.isSuccess ? (
+            <span className="text-xs text-success">已保存</span>
+          ) : null}
         </div>
       </div>
 
@@ -350,11 +367,26 @@ export function SettingsPage() {
         title={provider ? provider.displayName || provider.providerKey : ""}
         description="配置协议、密钥、模型选项与提示词覆盖；改动需点右上角「保存设置」后生效。"
         footer={
-          <Button variant="primary" onClick={() => setEditingKey(null)}>完成</Button>
+          <>
+            <Button
+              variant="ghost"
+              className="mr-auto text-danger hover:text-danger"
+              disabled={deleteMutation.isPending}
+              onClick={() => provider && deleteProvider(index, provider)}
+            >
+              <Trash2 size={15} />删除 Provider
+            </Button>
+            <Button variant="primary" onClick={() => setEditingKey(null)}>完成</Button>
+          </>
         }
       >
         {provider ? (
           <div className="space-y-4">
+            {deleteMutation.isError ? (
+              <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+                删除失败：{deleteMutation.error instanceof Error ? deleteMutation.error.message : String(deleteMutation.error)}
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               <TextField label="Provider Key" value={provider.providerKey} onChange={(value) => updateProvider(index, { providerKey: value })} />
               <TextField label="显示名称" value={provider.displayName} onChange={(value) => updateProvider(index, { displayName: value })} />
@@ -408,8 +440,8 @@ export function SettingsPage() {
                       启用
                     </label>
                     <div className="flex items-end gap-1">
-                      <Button size="icon" variant="ghost" aria-label="测试模型" onClick={() => testProviderModel(provider, model)}>
-                        <TestTube2 size={14} />
+                      <Button size="sm" variant="secondary" aria-label="测试模型连通性" onClick={() => testProviderModel(provider, model)}>
+                        <TestTube2 size={14} />测试
                       </Button>
                       {!model.id ? (
                         <Button size="icon" variant="ghost" aria-label="删除未保存模型" onClick={() => removeModel(index, modelIndex)}>
@@ -492,6 +524,21 @@ export function SettingsPage() {
     setEditingKey(newKey);
   }
 
+  function deleteProvider(index: number, provider: ProviderForm) {
+    const label = provider.displayName || provider.providerKey;
+    if (!window.confirm(`确认删除 Provider「${label}」及其全部模型？此操作不可恢复。`)) return;
+    // 已保存的 provider 走后端删除；未保存（无 id）的只从草稿移除。
+    if (provider.id) {
+      deleteMutation.mutate(provider.id);
+      return;
+    }
+    setEditingKey(null);
+    setDraft((current) => {
+      if (!current) return current;
+      return { ...current, providers: current.providers.filter((_, i) => i !== index) };
+    });
+  }
+
   function addModel(providerIndex: number) {
     setDraft((current) => {
       if (!current) return current;
@@ -534,13 +581,18 @@ export function SettingsPage() {
       setTestState((current) => ({ ...current, [key]: "请先保存 provider 并填写模型" }));
       return;
     }
-    setTestState((current) => ({ ...current, [key]: "测试中..." }));
+    setTestState((current) => ({ ...current, [key]: "测试中（发送 hi）..." }));
     try {
-      const result = await apiJson<{ ok: boolean; latencyMs: number }>(`/api/settings/providers/${provider.id}/test`, {
-        method: "POST",
-        body: JSON.stringify({ modelId: model.modelId }),
-      });
-      setTestState((current) => ({ ...current, [key]: `连接正常 ${result.latencyMs}ms` }));
+      const result = await apiJson<{ ok: boolean; latencyMs: number; reply?: string }>(
+        `/api/settings/providers/${provider.id}/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({ modelId: model.modelId }),
+        },
+      );
+      const reply = result.reply?.trim();
+      const preview = reply ? `回复「${reply.length > 60 ? `${reply.slice(0, 60)}…` : reply}」` : "无文本回复";
+      setTestState((current) => ({ ...current, [key]: `连接正常 ${result.latencyMs}ms · ${preview}` }));
     } catch (error) {
       setTestState((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }));
     }
