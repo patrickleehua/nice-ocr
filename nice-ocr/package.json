@@ -17,6 +17,7 @@
     "worker": "prisma db push --skip-generate && tsx scripts/worker.ts",
     "db:generate": "prisma generate",
     "db:backfill-provider-models": "tsx scripts/backfill-provider-models.ts",
+    "db:backfill-source-region": "tsx scripts/backfill-source-region.ts",
     "db:migrate": "tsx scripts/backfill-provider-models.ts && prisma migrate dev",
     "db:push": "tsx scripts/backfill-provider-models.ts && prisma db push --accept-data-loss",
     "db:seed": "tsx prisma/seed.ts",

@@ -8,10 +8,13 @@ import { DEFAULT_SCENARIO_ID, type FieldDef, type FieldScenario } from "@/lib/fi
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
 export const providerModelSources = ["manual", "imported"] as const;
 export const recognitionStrategies = ["fast", "balanced", "consensus", "manual"] as const;
+/** 行级原图区域来源：off=不存；model=多模态模型估算（不稳）；layout_ocr=本地 OCR 版面真实坐标。 */
+export const sourceRegionModes = ["off", "model", "layout_ocr"] as const;
 
 export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
 export type ProviderModelSource = (typeof providerModelSources)[number];
 export type RecognitionStrategy = (typeof recognitionStrategies)[number];
+export type SourceRegionMode = (typeof sourceRegionModes)[number];
 
 /**
  * 行级原图区域指令：要求模型为每个明细行返回归一化坐标(sourceRegion)，供审核台原图高亮定位。
@@ -69,6 +72,10 @@ export interface RecognitionDefaults {
   auditSampleRate: number;
   auditProviderKey: string | null;
   auditModelId: string | null;
+  /** 行级原图区域来源策略；layout_ocr 时由 ocrLayoutUrl 指向的本地 OCR 服务出真实坐标。 */
+  sourceRegionMode: SourceRegionMode;
+  /** 本地 OCR 版面服务地址（如 http://127.0.0.1:8077）；为空则回退 OCR_LAYOUT_URL 环境变量。 */
+  ocrLayoutUrl: string | null;
 }
 
 export interface SafeAiProviderModel {
@@ -173,6 +180,8 @@ export const recognitionDefaults: RecognitionDefaults = {
   auditSampleRate: 0.1,
   auditProviderKey: null,
   auditModelId: null,
+  sourceRegionMode: "layout_ocr",
+  ocrLayoutUrl: null,
 };
 
 const recognitionDefaultsKey = "recognition.defaults";
@@ -654,6 +663,10 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     auditSampleRate: clampNumber(input.auditSampleRate, 0, 1, recognitionDefaults.auditSampleRate),
     auditProviderKey: normalizePromptString(input.auditProviderKey),
     auditModelId: normalizePromptString(input.auditModelId),
+    sourceRegionMode: sourceRegionModes.includes(input.sourceRegionMode as SourceRegionMode)
+      ? (input.sourceRegionMode as SourceRegionMode)
+      : recognitionDefaults.sourceRegionMode,
+    ocrLayoutUrl: normalizePromptString(input.ocrLayoutUrl),
   };
 }
 

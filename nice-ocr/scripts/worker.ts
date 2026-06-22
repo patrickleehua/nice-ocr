@@ -37,6 +37,9 @@ import {
   type AuditableRow,
 } from "@/lib/recognition/audit";
 import { serializeSourceRegion } from "@/lib/recognition/source-region";
+import { createOcrLayoutProvider } from "@/lib/recognition/ocr-layout";
+import { matchRowsToLayout } from "@/lib/recognition/source-region-match";
+import type { ExtractionRow } from "@/lib/recognition/schema";
 
 const workerId = `worker-${process.pid}`;
 
@@ -108,6 +111,40 @@ function resolveContextPrompts(
   return resolveProviderPrompts(config, defaultPromptsUnchanged ? undefined : defaults, fallback);
 }
 
+/**
+ * 行级原图来源区域：按设置策略产出每行 sourceRegionJson（与 canonicalRows 等长）。
+ * - off：不存。
+ * - model：用多模态模型自报坐标（精度不稳，旧行为）。
+ * - layout_ocr：调本地 OCR 版面服务取真实文字框，按编码/名称匹配到行；未命中项回退模型坐标。
+ *   OCR 不可用/出错时整体回退模型坐标，绝不让识别失败。
+ */
+async function resolveSourceRegions(
+  job: ClaimedJob,
+  rows: ExtractionRow[],
+  defaults: RecognitionDefaults,
+): Promise<Array<string | undefined>> {
+  if (defaults.sourceRegionMode === "off") return rows.map(() => undefined);
+  const modelRegions = rows.map((row) => serializeSourceRegion(row.sourceRegion));
+  if (defaults.sourceRegionMode !== "layout_ocr") return modelRegions;
+
+  const provider = createOcrLayoutProvider(defaults.ocrLayoutUrl);
+  if (!provider) return modelRegions;
+  try {
+    const layout = await provider.layout({ imagePath: path.resolve(job.document.storedPath) });
+    const matched = matchRowsToLayout(rows, layout);
+    const merged = rows.map((_, index) => serializeSourceRegion(matched[index]) ?? modelRegions[index]);
+    logger.info(
+      `${workerId} ocr-layout doc=${job.documentId} lines=${layout.lines.length} matched=${matched.filter(Boolean).length}/${rows.length}`,
+    );
+    return merged;
+  } catch (error) {
+    logger.warn(
+      `${workerId} ocr-layout doc=${job.documentId} fallback→model: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return modelRegions;
+  }
+}
+
 async function extractDocument(job: ClaimedJob) {
   // 进入识别即把文档标记为「处理中」，让文件列表能区分「排队」与「正在识别」。
   await prisma.document.update({ where: { id: job.documentId }, data: { status: "processing" } });
@@ -141,6 +178,8 @@ async function extractDocument(job: ClaimedJob) {
     where: { documentId: job.documentId, status: { not: "confirmed" } },
   });
 
+  const sourceRegions = await resolveSourceRegions(job, canonicalRows, defaults);
+
   let hasHighRisk = false;
   let autoApproved = 0;
   for (const [index, row] of canonicalRows.entries()) {
@@ -169,7 +208,7 @@ async function extractDocument(job: ClaimedJob) {
         riskLevel: validation.riskLevel,
         riskReasonsJson: JSON.stringify(validation.reasons),
         conflictState: validation.reasons.length ? "open" : "none",
-        sourceRegionJson: serializeSourceRegion(row.sourceRegion),
+        sourceRegionJson: sourceRegions[index],
         // 非默认场景声明了 extra 字段时落库 extraJson；grocery 无 extra → 不写（保持默认 "{}"）。
         ...(hasExtra ? { extraJson: JSON.stringify(row.extra ?? {}) } : {}),
       },
