@@ -18,7 +18,7 @@ import base64
 import io
 import os
 import threading
-from functools import lru_cache
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -27,11 +27,24 @@ from PIL import Image
 
 OCR_LANG = os.environ.get("OCR_LAYOUT_LANG", "ch")
 
-app = FastAPI(title="nice-ocr layout service")
 
-# PaddleOCR 预测器非线程安全：FastAPI 把同步接口丢线程池并行执行，worker 并发(默认 3)会同时
-# 打多个 /layout，多线程同时 predict 同一实例会偶发 500。用全局锁串行化（OCR 本就 CPU 密集）。
+@asynccontextmanager
+async def lifespan(_app: "FastAPI"):
+    # 每个 worker 进程启动即预加载预测器：避免并发首请求同时触发模型初始化引发崩溃(500)，
+    # 并让首批真实请求直接命中已就绪的模型。
+    get_ocr()
+    yield
+
+
+app = FastAPI(title="nice-ocr layout service", lifespan=lifespan)
+
+# 并发说明：本机实测 PaddleOCR(CPU 构建) 一旦「同时」推理就 native 崩溃（segfault / 连接重置）——
+# 无论单进程多线程、单进程多实例，还是多进程并行都会崩。因此默认 OCR_LAYOUT_WORKERS=1 串行，
+# 进程内再用锁确保任一时刻只有一个 predict。要真正并发需换并发安全的运行时（GPU 版 / RapidOCR-ONNX）。
+OCR_WORKERS = max(1, int(os.environ.get("OCR_LAYOUT_WORKERS", "1")))
+_ocr = None
 _ocr_lock = threading.Lock()
+_ocr_init_lock = threading.Lock()
 
 
 class LayoutRequest(BaseModel):
@@ -44,27 +57,39 @@ def _truthy(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-@lru_cache(maxsize=1)
-def get_ocr():
-    """惰性加载 PaddleOCR；首次调用会下载模型（数十 MB）。
+def _build_ocr():
+    """新建一个 PaddleOCR 实例（第一个实例首次调用会下载模型，数十 MB）。
 
     默认关闭文档方向分类 / 去扭曲 / 文字行方向三个可选子模型：
     票据基本平整、用不上，关掉可少下 3 个模型、加快首次启动、减少对模型服务器的依赖。
     需要时用环境变量 OCR_LAYOUT_ORIENT=1 打开文字行方向。
+    多实例并发时建议设 OCR_LAYOUT_CPU_THREADS 限制每实例线程数，避免 CPU 过度订阅。
     """
     from paddleocr import PaddleOCR
 
     orient = _truthy("OCR_LAYOUT_ORIENT")
+    # 注意：不要传 cpu_threads / enable_mkldnn —— 实测在本 paddle 构建 + 多 worker 下会让进程硬崩溃
+    # (ConnectionReset)。限制每进程线程数改用 OMP_NUM_THREADS 环境变量（见 server.py __main__）。
+    kwargs: dict[str, Any] = {
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": orient,
+    }
     # 3.x 形参；旧版（2.x）不识别这些参数 → 回退到 use_angle_cls。
     try:
-        return PaddleOCR(
-            lang=OCR_LANG,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=orient,
-        )
+        return PaddleOCR(lang=OCR_LANG, **kwargs)
     except TypeError:
         return PaddleOCR(lang=OCR_LANG, use_angle_cls=orient)
+
+
+def get_ocr():
+    """惰性创建本进程唯一的预测器。"""
+    global _ocr
+    if _ocr is None:
+        with _ocr_init_lock:
+            if _ocr is None:
+                _ocr = _build_ocr()
+    return _ocr
 
 
 def _load_image(req: LayoutRequest) -> tuple[Any, int, int]:
@@ -108,12 +133,11 @@ def _clamp01(v: float) -> float:
 def _run_ocr(image_path: str) -> list[tuple[list[list[float]], str, float]]:
     """统一返回 [(poly4, text, score), ...]，兼容 2.x / 3.x。"""
     ocr = get_ocr()
-    # 串行化推理：预测器非线程安全，并发请求必须排队。
-    with _ocr_lock:
-        return _run_ocr_locked(ocr, image_path)
+    with _ocr_lock:  # 进程内串行；并行靠多 worker 进程
+        return _run_ocr_with(ocr, image_path)
 
 
-def _run_ocr_locked(ocr, image_path: str) -> list[tuple[list[list[float]], str, float]]:
+def _run_ocr_with(ocr, image_path: str) -> list[tuple[list[list[float]], str, float]]:
     lines: list[tuple[list[list[float]], str, float]] = []
 
     # 3.x: predict 返回 list[dict|Result]，字段含 rec_texts / rec_scores / rec_polys(或 dt_polys)
@@ -150,13 +174,21 @@ def _run_ocr_locked(ocr, image_path: str) -> list[tuple[list[list[float]], str, 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "lang": OCR_LANG}
+    return {"status": "ok", "lang": OCR_LANG, "workers": OCR_WORKERS}
 
 
 @app.post("/layout")
 def layout(req: LayoutRequest) -> dict[str, Any]:
     image_path, width, height = _load_image(req)
-    raw_lines = _run_ocr(image_path)
+    try:
+        raw_lines = _run_ocr(image_path)
+    except HTTPException:
+        raise
+    except BaseException as error:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(error).__name__}: {error}") from error
     lines = [
         {
             "text": text,
@@ -173,8 +205,19 @@ def layout(req: LayoutRequest) -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
+    # 限制每进程 OpenMP 线程数：默认 = 核数 / 进程数，避免 N 个 worker 在多核上过度订阅、拖慢并行。
+    # 用环境变量而非 paddle 的 cpu_threads kwarg（后者在本构建 + 多 worker 下会硬崩溃）；
+    # spawn 出的 worker 进程继承父进程环境，故在导入 paddle 前生效。
+    threads = os.environ.get("OCR_LAYOUT_CPU_THREADS") or str(
+        max(1, (os.cpu_count() or OCR_WORKERS) // OCR_WORKERS)
+    )
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        os.environ.setdefault(var, threads)
+
+    # workers>1 需用 import 字符串而非 app 对象；每个 worker 进程各自预加载预测器。
     uvicorn.run(
-        app,
+        "server:app",
         host=os.environ.get("OCR_LAYOUT_HOST", "127.0.0.1"),
         port=int(os.environ.get("OCR_LAYOUT_PORT", "8077")),
+        workers=OCR_WORKERS,
     )
