@@ -16,6 +16,7 @@ import { DEFAULT_SCENARIO_ID, getScenarioFields } from "@/lib/fields/field-schem
 import {
   defaultRecognitionPrompts,
   getActiveRecognitionTarget,
+  sourceRegionPromptInstruction,
   type RecognitionTarget,
   type ProviderProtocol,
 } from "@/lib/recognition/settings";
@@ -84,16 +85,32 @@ export async function createConfiguredRecognitionProvider(scenarioId?: string | 
   return createRecognitionProvider(target, resolveProviderPrompts(target.provider), extractionConfigForScenario(scenarioId));
 }
 
+/**
+ * 强制注入行级区域指令：无论 provider/全局/场景如何自定义系统提示词，都确保模型被要求返回 sourceRegion。
+ * 幂等——已包含 sourceRegion 指令（如内置默认）时原样返回，避免重复。
+ * 放在 provider 构造处而非 resolveProviderPrompts，是为了保持后者的纯优先级语义（含其单测断言）。
+ */
+export function ensureSourceRegionInstruction(systemPrompt: string): string {
+  return systemPrompt.includes("sourceRegion")
+    ? systemPrompt
+    : `${systemPrompt}\n${sourceRegionPromptInstruction}`;
+}
+
 export function createRecognitionProvider(
   target: RecognitionTarget,
   prompts: ProviderPrompts = resolveProviderPrompts(target.provider),
   extraction: ExtractionConfig = defaultExtraction,
 ): RecognitionProvider {
+  // 所有识别 pass（主/副/审核）与 createConfiguredRecognitionProvider 都经此构造，统一在此补回坐标指令。
+  const finalPrompts: ProviderPrompts = {
+    ...prompts,
+    systemPrompt: ensureSourceRegionInstruction(prompts.systemPrompt),
+  };
   if (target.provider.protocol === "openai_responses") {
-    return new OpenAIResponsesProvider(target, prompts, extraction);
+    return new OpenAIResponsesProvider(target, finalPrompts, extraction);
   }
   if (target.provider.protocol === "anthropic_messages") {
-    return new AnthropicMessagesProvider(target, prompts, extraction);
+    return new AnthropicMessagesProvider(target, finalPrompts, extraction);
   }
   throw new Error(`Unsupported AI provider protocol: ${target.provider.protocol}`);
 }

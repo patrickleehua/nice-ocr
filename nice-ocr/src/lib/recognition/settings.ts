@@ -13,10 +13,19 @@ export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
 export type ProviderModelSource = (typeof providerModelSources)[number];
 export type RecognitionStrategy = (typeof recognitionStrategies)[number];
 
+/**
+ * 行级原图区域指令：要求模型为每个明细行返回归一化坐标(sourceRegion)，供审核台原图高亮定位。
+ * 单独抽成常量，作为「用户可覆盖提示词」之外的强制注入项（见 provider.ensureSourceRegionInstruction）：
+ * 一旦用户/历史在设置页保存了不含该指令的自定义提示词，模型就不会返回坐标，原图映射功能会整体失效。
+ */
+export const sourceRegionPromptInstruction =
+  "尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。";
+
 /** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
 export const defaultRecognitionPrompts = {
   systemPrompt:
-    "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。",
+    "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。" +
+    sourceRegionPromptInstruction,
   userPrompt: "请抽取这张单据图片中的日期和所有表格明细行。",
 } as const;
 
@@ -35,7 +44,7 @@ export function buildRecognitionPrompt(
     .map((field) => (field.recognitionHint ? `${field.label}（${field.recognitionHint}）` : field.label))
     .join("、");
   return {
-    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。`,
+    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。${sourceRegionPromptInstruction}`,
     userPrompt: `请抽取这张「${scenario.name}」图片中的日期和所有表格明细行。`,
   };
 }

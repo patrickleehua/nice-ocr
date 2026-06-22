@@ -212,7 +212,7 @@ export function ReviewPage() {
   const imageRegions = useMemo<ImageRegion[]>(
     () =>
       rows
-        .map((row, index) => {
+        .map((row, index): ImageRegion | null => {
           const box = rowSourceRegion(row);
           if (!box) return null;
           return {
@@ -220,9 +220,9 @@ export function ReviewPage() {
             label: `第 ${index + 1} 行 ${row.name}`,
             box,
             tone: row.auditState === "flagged" ? "flagged" : "active",
-          } satisfies ImageRegion;
+          };
         })
-        .filter((region): region is ImageRegion => Boolean(region)),
+        .filter((region): region is ImageRegion => region !== null),
     [rows],
   );
 

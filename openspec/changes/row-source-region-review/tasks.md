@@ -38,8 +38,14 @@
 - [x] 6.4 行切换、文档切换时清理 active/target 状态
 
 ## 7. 验证与交付
-- [ ] 7.1 `pnpm typecheck`
-- [ ] 7.2 `pnpm test`
-- [ ] 7.3 手工验证：上传新图识别后 hover/click 明细行能定位原图区域
-- [ ] 7.4 手工验证：旧数据无坐标仍能正常审核
+- [x] 7.1 `pnpm typecheck`（修复 review-page.tsx imageRegions 类型谓词错误后通过）
+- [x] 7.2 `pnpm test`（75 项全过，含 sourceRegionJson 落库与提示词注入回归）
+- [ ] 7.3 手工验证：上传新图识别后 hover/click 明细行能定位原图区域（需配置可用 AI provider 实跑）
+- [ ] 7.4 手工验证：旧数据无坐标仍能正常审核（需配置可用 AI provider 实跑）
 - [x] 7.5 完成后按项目约定提交 `feat:识别行支持原图区域定位`
+
+## 8. 上线后修复（功能未生效根因）
+首版提交时未执行 typecheck/test/db push（见 verification.md：当时环境无 Node），导致功能链路虽完整但运行期不生效。系统排查出三处根因并修复：
+- [x] 8.1 schema 漂移：`sourceRegionJson` 字段加进 schema.prisma 但从未 `prisma generate` + `db push`，dev.db/test.db 都没有该列 → worker 写库即抛未知字段。修复：`prisma db push` 同步 dev.db 并重生 client。
+- [x] 8.2 提示词丢失：坐标指令被写死在「可被用户覆盖」的系统提示词里，dev.db 已存的全局提示词「【全局】识别副食品销售单，结构化输出」不含该指令 → 模型从不返回坐标。修复：抽出 `sourceRegionPromptInstruction` 常量，在 `createRecognitionProvider` 构造处幂等强制注入（不污染 `resolveProviderPrompts` 纯优先级语义），并加回归测试复现该已存提示词。
+- [x] 8.3 类型错误：`review-page.tsx` 的 `imageRegions` 用 `satisfies` + 类型谓词导致 `tsc` 报错、`next build` 会失败。修复：map 显式返回 `ImageRegion | null`，filter 用 `region !== null` 收窄。

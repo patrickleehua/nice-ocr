@@ -11,8 +11,8 @@ import { rebuildProductLibrary } from "../products";
 import { confirmRecognitionRows, createRecognitionRow, excludeRecognitionRow, updateRecognitionRow } from "../rows";
 import { resolveProductConflict } from "../conflicts";
 import { buildConsensusFlags, decideRowReview, shouldRunConsensus } from "../../recognition/review";
-import { resolveProviderPrompts } from "../../recognition/provider";
-import { defaultRecognitionPrompts } from "../../recognition/settings";
+import { ensureSourceRegionInstruction, resolveProviderPrompts } from "../../recognition/provider";
+import { defaultRecognitionPrompts, sourceRegionPromptInstruction } from "../../recognition/settings";
 import { auditRowByRules, buildAuditStats, findDuplicateRowIds } from "../../recognition/audit";
 import { serializeSourceRegion } from "../../recognition/source-region";
 
@@ -530,6 +530,26 @@ describe("provider prompts", () => {
       systemPrompt: "S-SCENE",
       userPrompt: "U-SCENE",
     });
+  });
+});
+
+describe("source region prompt injection", () => {
+  // 回归：用户/历史在设置页保存的自定义提示词不含坐标指令时，原图映射会整体失效。
+  // 解法是在构造 provider 时强制幂等补回 sourceRegion 指令，而不污染 resolveProviderPrompts 的纯优先级语义。
+  it("内置默认提示词已含 sourceRegion 指令 → 幂等不重复注入", () => {
+    assert.ok(defaultRecognitionPrompts.systemPrompt.includes("sourceRegion"));
+    assert.equal(
+      ensureSourceRegionInstruction(defaultRecognitionPrompts.systemPrompt),
+      defaultRecognitionPrompts.systemPrompt,
+    );
+  });
+
+  it("自定义提示词缺失指令时补回坐标要求（复现线上已保存的全局提示词）", () => {
+    const stored = "【全局】识别副食品销售单，结构化输出";
+    const injected = ensureSourceRegionInstruction(stored);
+    assert.ok(injected.startsWith(stored));
+    assert.ok(injected.includes(sourceRegionPromptInstruction));
+    assert.ok(injected.includes("sourceRegion"));
   });
 });
 
