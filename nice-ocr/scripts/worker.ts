@@ -109,6 +109,8 @@ function resolveContextPrompts(
 }
 
 async function extractDocument(job: ClaimedJob) {
+  // 进入识别即把文档标记为「处理中」，让文件列表能区分「排队」与「正在识别」。
+  await prisma.document.update({ where: { id: job.documentId }, data: { status: "processing" } });
   const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
   const { extraction, promptFallback, hasExtra } = scenarioContext(job);
 
@@ -347,6 +349,32 @@ async function reclaimStaleJobs() {
   }
 }
 
+/**
+ * 识别队列排空后回写批次状态：上传时批次被置为 "processing"，但没有任何环节把它
+ * 改回终态，导致批次永远停在「处理中」。这里在每个 job 结束后按「是否还有待处理识别
+ * job」+「文档识别结果」推导批次终态：
+ * - 仍有 extract/second_pass/consensus 在排队或执行 → 保持 processing（audit 属审核期不计）。
+ * - 全部失败 → failed；部分失败 → needs_review；全部识别成功 → completed。
+ */
+async function refreshBatchStatus(batchId: string) {
+  const pending = await prisma.recognitionJob.count({
+    where: { batchId, type: { in: ["extract", "second_pass", "consensus"] }, status: { in: ["queued", "active"] } },
+  });
+  if (pending > 0) return;
+
+  const groups = await prisma.document.groupBy({
+    by: ["status"],
+    where: { batchId },
+    _count: { _all: true },
+  });
+  const total = groups.reduce((sum, group) => sum + group._count._all, 0);
+  if (total === 0) return;
+  const failed = groups.find((group) => group.status === "failed")?._count._all ?? 0;
+
+  const status = failed === total ? "failed" : failed > 0 ? "needs_review" : "completed";
+  await prisma.batch.update({ where: { id: batchId }, data: { status } });
+}
+
 /** 处理一个已领取的 job（完成 / 重试 / 失败落库）。不负责领取。 */
 async function handleClaimedJob(job: ClaimedJob) {
   try {
@@ -359,6 +387,7 @@ async function handleClaimedJob(job: ClaimedJob) {
       where: { id: job.id },
       data: { status: "completed", lockedAt: null, lockedBy: null },
     });
+    if (job.type !== "audit") await refreshBatchStatus(job.batchId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const defaults = await getRecognitionDefaults();
@@ -378,6 +407,8 @@ async function handleClaimedJob(job: ClaimedJob) {
         where: { id: job.documentId },
         data: { status: shouldRetry ? "queued" : "failed" },
       });
+      // 终态失败（不再重试）才结算批次；仍会重试时保持 processing 等下次执行。
+      if (!shouldRetry) await refreshBatchStatus(job.batchId);
     }
     logger.error(`${workerId} failed job=${job.id} type=${job.type}: ${message}`);
   }

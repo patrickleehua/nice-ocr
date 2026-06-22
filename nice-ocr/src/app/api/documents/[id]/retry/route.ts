@@ -20,5 +20,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     where: { id },
     data: { status: "queued" },
   });
+  // 重新入队识别 → 批次回到「处理中」，待 worker 排空后由其重新结算终态。
+  await prisma.batch.update({
+    where: { id: document.batchId },
+    data: { status: "processing" },
+  });
   return NextResponse.json({ job }, { status: 201 });
 }
