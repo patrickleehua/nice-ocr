@@ -155,3 +155,14 @@ export function findFieldDef(id: string | null | undefined, key: string): FieldD
 export function isCoreColumn(key: string): key is CoreRowColumn {
   return (CORE_ROW_COLUMNS as readonly string[]).includes(key);
 }
+
+/**
+ * 明细表里字段输入框/单元格的最小宽度类（屏幕展示用，独立于导出 Excel 的 width）。
+ * 商品名称、备注等文本列给足宽度，保证长名称一眼可见、不被相邻列遮挡或截断。
+ * compact=true 时收窄商品名称列（审核台用），让「状态/标识类别」在首屏内可见。
+ */
+export function fieldCellWidthClass(field: FieldDef, compact = false): string {
+  if (field.key === "name") return compact ? "min-w-[11rem]" : "min-w-[18rem]";
+  if (field.key === "remark") return "min-w-[12rem]";
+  return "min-w-16";
+}

@@ -103,7 +103,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           {!collapsed ? (
             <div>
-              <div className="text-sm font-semibold text-white">nice-ocr</div>
+              <div className="text-sm font-semibold text-foreground">nice-ocr</div>
               <div className="text-[11px] text-sidebar-muted">智能单据识别</div>
             </div>
           ) : null}
@@ -130,8 +130,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         "flex h-9 items-center rounded-md text-sm transition-colors",
                         collapsed ? "justify-center px-0" : "gap-2 px-2",
                         active
-                          ? "bg-sidebar-hover text-white"
-                          : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-white",
+                          ? "bg-primary/10 font-medium text-primary"
+                          : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground",
                       )}
                     >
                       <Icon size={16} />

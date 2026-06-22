@@ -10,11 +10,11 @@
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
   --primary-foreground: #ffffff;
-  --sidebar: #0f2235;
-  --sidebar-border: #1b344d;
-  --sidebar-foreground: #dce7f2;
-  --sidebar-muted: #8aa0b5;
-  --sidebar-hover: #18334c;
+  --sidebar: #ffffff;
+  --sidebar-border: #e6eaf1;
+  --sidebar-foreground: #475569;
+  --sidebar-muted: #94a3b8;
+  --sidebar-hover: #eef2f8;
   --table-header: #f8fafc;
   --table-header-foreground: #334155;
   --success: #10b981;

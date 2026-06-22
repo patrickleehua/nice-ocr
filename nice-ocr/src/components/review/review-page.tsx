@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, Check, ChevronLeft, ChevronRight, LocateFixed, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
+import { Boxes, Check, ChevronLeft, ChevronRight, Columns3, LocateFixed, LocateOff, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +18,7 @@ import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
 import { useSidebar } from "@/components/app-shell/sidebar-context";
 import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
-import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
+import { DEFAULT_SCENARIO_ID, fieldCellWidthClass, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
@@ -156,6 +156,63 @@ export function ReviewPage() {
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [targetRowId, setTargetRowId] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  // 列显示偏好：被隐藏的字段列 key 集合，持久化到 localStorage。
+  const [hiddenFieldKeys, setHiddenFieldKeys] = useState<Set<string>>(new Set());
+  // 单行数据定位开关：开=点击/悬停行可在原图定位并高亮，关=纯查看不联动、原图不画框。
+  const [locateEnabled, setLocateEnabled] = useState(true);
+
+  // 挂载后读取持久化偏好（初值取默认，避免 SSR/CSR 水合不一致）。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawCols = window.localStorage.getItem("review-hidden-cols");
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
+      if (rawCols) setHiddenFieldKeys(new Set(JSON.parse(rawCols) as string[]));
+    } catch {
+      /* 忽略损坏的本地偏好 */
+    }
+    if (window.localStorage.getItem("review-locate-enabled") === "0") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
+      setLocateEnabled(false);
+    }
+  }, []);
+
+  function toggleColumn(key: string) {
+    setHiddenFieldKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      if (typeof window !== "undefined") window.localStorage.setItem("review-hidden-cols", JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  function toggleLocate() {
+    setLocateEnabled((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") window.localStorage.setItem("review-locate-enabled", next ? "1" : "0");
+      return next;
+    });
+  }
+  // 顶部文件条：左右拖拽横向滚动。moved 标记用于区分「拖拽」与「点击选中」，避免拖动时误选文件。
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const stripDrag = useRef({ active: false, startX: 0, scrollLeft: 0, moved: false });
+
+  function onStripPointerDown(event: React.PointerEvent) {
+    const el = stripRef.current;
+    if (!el) return;
+    stripDrag.current = { active: true, startX: event.clientX, scrollLeft: el.scrollLeft, moved: false };
+  }
+  function onStripPointerMove(event: React.PointerEvent) {
+    const el = stripRef.current;
+    if (!el || !stripDrag.current.active) return;
+    const dx = event.clientX - stripDrag.current.startX;
+    if (Math.abs(dx) > 4) stripDrag.current.moved = true;
+    el.scrollLeft = stripDrag.current.scrollLeft - dx;
+  }
+  function endStripDrag() {
+    stripDrag.current.active = false;
+  }
 
   // 作用域随 URL 切换时同步选中文档：带 documentId 深链则定位之，否则回到列表首项（清空旧批次的陈旧选中）。
   // render 阶段调整状态，优于 effect：避免跨批次陈旧 documentId 的一帧闪烁。
@@ -229,6 +286,10 @@ export function ReviewPage() {
   const fieldSchema = useFieldSchema({ batchId: activeDocBatchId });
   // 加载前用默认场景字段兜底，避免列结构跳变。
   const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
+  // 应用「列显示」勾选，并把备注列后移到「标识类别」之后，让人工核对标识在首屏内可见。
+  const visibleFields = useMemo(() => fields.filter((field) => !hiddenFieldKeys.has(field.key)), [fields, hiddenFieldKeys]);
+  const remarkField = useMemo(() => visibleFields.find((field) => field.key === "remark") ?? null, [visibleFields]);
+  const mainFields = useMemo(() => visibleFields.filter((field) => field.key !== "remark"), [visibleFields]);
 
   useEffect(() => {
     setActiveRowId(null);
@@ -477,7 +538,7 @@ export function ReviewPage() {
               )}
               {batchDetail ? <ApprovalModeBadge mode={batchDetail.batch.approvalMode} /> : null}
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">左侧选择文件、中间查看原图（可缩放/拖拽）、右侧点击单元格直接修改识别结果。</p>
+            <p className="mt-1 text-sm text-muted-foreground">顶部选择文件（可左右拖拽滑动）、左侧查看原图（可缩放/拖拽）、右侧点击单元格直接修改识别结果。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <BatchScopeSelect batchId={batchIdParam ?? ""} />
@@ -516,6 +577,112 @@ export function ReviewPage() {
         </div>
       )}
 
+      {/* 文件条 —— 仅普通模式置于顶部，可左右拖拽横向滚动；专注模式用顶部精简控制条 + 快速跳转切换 */}
+      {!focus ? (
+        <Panel className="flex flex-col">
+          <PanelHeader>
+            <PanelTitle>文件</PanelTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2 text-sm">
+                <Search size={14} className="text-muted-foreground" />
+                <input
+                  value={docSearch}
+                  onChange={(event) => {
+                    setDocSearch(event.target.value);
+                    setDocPage(1);
+                  }}
+                  placeholder="搜索文件名"
+                  className="h-full w-40 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {docFilters.map((filter) => (
+                  <button
+                    key={filter.key}
+                    onClick={() => {
+                      setDocFilter(filter.key);
+                      setDocPage(1);
+                    }}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
+                      docFilter === filter.key
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-surface text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-muted-foreground">{filteredDocs.length} 个</span>
+            </div>
+          </PanelHeader>
+          <div className="flex items-center gap-2 p-3">
+            <button
+              className="h-7 shrink-0 rounded border border-border bg-surface px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+              onClick={() => setDocPage((current) => Math.max(1, current - 1))}
+              disabled={safeDocPage <= 1}
+              title="上一页"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            {pagedDocs.length ? (
+              <div
+                ref={stripRef}
+                onPointerDown={onStripPointerDown}
+                onPointerMove={onStripPointerMove}
+                onPointerUp={endStripDrag}
+                onPointerLeave={endStripDrag}
+                className="flex flex-1 cursor-grab gap-2 overflow-x-auto pb-1 active:cursor-grabbing"
+              >
+                {pagedDocs.map((doc) => {
+                  const badge = docStateBadge[doc.reviewState];
+                  return (
+                    <button
+                      key={doc.id}
+                      onClick={() => {
+                        // 拖拽产生的位移不应触发选中（仅纯点击选中文件）。
+                        if (stripDrag.current.moved) return;
+                        selectDoc(doc.id);
+                      }}
+                      className={`w-56 shrink-0 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                        doc.id === selectedId ? "border-primary bg-primary/5" : "border-border bg-surface hover:bg-muted"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium">{doc.originalName}</span>
+                        <Badge tone={badge.tone}>{badge.label}</Badge>
+                      </div>
+                      {/* 全部模式标注所属批次（收件箱式来源标签）；隔离模式同批次无需重复。 */}
+                      {isAllScope ? (
+                        <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <Boxes size={11} className="shrink-0" />
+                          <span className="truncate">{doc.batchName}</span>
+                        </div>
+                      ) : null}
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
+                        <RiskBadge risk={doc.riskLevel} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex-1 px-2 py-4 text-center text-xs text-muted-foreground">没有符合条件的文档</div>
+            )}
+            <button
+              className="h-7 shrink-0 rounded border border-border bg-surface px-2 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+              onClick={() => setDocPage((current) => Math.min(docTotalPages, current + 1))}
+              disabled={safeDocPage >= docTotalPages}
+              title="下一页"
+            >
+              <ChevronRight size={14} />
+            </button>
+            <span className="shrink-0 text-[11px] text-muted-foreground">{safeDocPage} / {docTotalPages}</span>
+          </div>
+        </Panel>
+      ) : null}
+
       <div
         className={cn(
           "grid gap-4",
@@ -523,107 +690,15 @@ export function ReviewPage() {
             ? // 专注模式固定视口高度（非 min-h），使两列等高、明细内部滚动、原图垂直居中；
               // 否则表格内容会撑开行高，导致 flex-1+overflow 失效（明细过长、原图被推到底部）。
               "h-[calc(100vh-9.5rem)] min-h-0 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"
-            : "min-h-[640px] xl:grid-cols-[230px_minmax(0,1fr)_minmax(0,1.3fr)]",
+            : // 普通模式同样给定定高，使「原图」与「识别明细」两列左右等高对齐、明细内部滚动；
+              // 识别尝试/风险详情移到整组下方，故此处只放这两列。
+              "min-h-[560px] xl:h-[calc(100vh-15rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]",
         )}
       >
-        {/* 列 1：文件列表 —— 仅普通模式；专注模式用顶部精简控制条 + 快速跳转切换 */}
-        {!focus ? (
+        {/* 列 1：原图预览（可缩放 + 拖拽平移） */}
         <Panel className="flex min-h-0 flex-col">
-          <PanelHeader>
-            <PanelTitle>文件</PanelTitle>
-            <span className="text-xs text-muted-foreground">{filteredDocs.length} 个</span>
-          </PanelHeader>
-          <div className="flex flex-col gap-2 border-b border-border p-3">
-            <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-muted px-2 text-sm">
-              <Search size={14} className="text-muted-foreground" />
-              <input
-                value={docSearch}
-                onChange={(event) => {
-                  setDocSearch(event.target.value);
-                  setDocPage(1);
-                }}
-                placeholder="搜索文件名"
-                className="h-full flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {docFilters.map((filter) => (
-                <button
-                  key={filter.key}
-                  onClick={() => {
-                    setDocFilter(filter.key);
-                    setDocPage(1);
-                  }}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors ${
-                    docFilter === filter.key
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-surface text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-            {pagedDocs.length ? (
-              pagedDocs.map((doc) => {
-                const badge = docStateBadge[doc.reviewState];
-                return (
-                  <button
-                    key={doc.id}
-                    onClick={() => selectDoc(doc.id)}
-                    className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
-                      doc.id === selectedId ? "border-primary bg-primary/5" : "border-border bg-surface hover:bg-muted"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-xs font-medium">{doc.originalName}</span>
-                      <Badge tone={badge.tone}>{badge.label}</Badge>
-                    </div>
-                    {/* 全部模式标注所属批次（收件箱式来源标签）；隔离模式同批次无需重复。 */}
-                    {isAllScope ? (
-                      <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-                        <Boxes size={11} className="shrink-0" />
-                        <span className="truncate">{doc.batchName}</span>
-                      </div>
-                    ) : null}
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{doc.rowStats.confirmed}/{doc.rowStats.total} 已确认</span>
-                      <RiskBadge risk={doc.riskLevel} />
-                    </div>
-                  </button>
-                );
-              })
-            ) : (
-              <div className="px-2 py-4 text-center text-xs text-muted-foreground">没有符合条件的文档</div>
-            )}
-          </div>
-          <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-            <span>{safeDocPage} / {docTotalPages}</span>
-            <div className="flex items-center gap-1">
-              <button
-                className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
-                onClick={() => setDocPage((current) => Math.max(1, current - 1))}
-                disabled={safeDocPage <= 1}
-              >
-                上一页
-              </button>
-              <button
-                className="h-6 rounded border border-border bg-surface px-2 hover:bg-muted disabled:opacity-50"
-                onClick={() => setDocPage((current) => Math.min(docTotalPages, current + 1))}
-                disabled={safeDocPage >= docTotalPages}
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </Panel>
-        ) : null}
-
-        {/* 列 2：原图预览（可缩放 + 拖拽平移） */}
-        <Panel className="flex min-h-0 flex-col">
-          <PanelHeader>
+          {/* 固定表头高度 h-14，使其与右侧「识别明细」表头底部的分隔线左右对齐 */}
+          <PanelHeader className="h-14 shrink-0">
             <PanelTitle className="truncate">{document?.originalName ?? "单据预览"}</PanelTitle>
             {document ? <RiskBadge risk={document.riskLevel} /> : null}
           </PanelHeader>
@@ -631,7 +706,7 @@ export function ReviewPage() {
             className="flex-1"
             src={selectedId ? apiPaths.documentImage(selectedId) : null}
             alt={document?.originalName ?? "单据原图"}
-            regions={imageRegions}
+            regions={locateEnabled ? imageRegions : []}
             activeRegionId={activeRowId}
             targetRegionId={targetRowId}
             onRegionSelect={selectRegion}
@@ -639,12 +714,25 @@ export function ReviewPage() {
 
         </Panel>
 
-        <div className={cn("min-w-0", focus ? "flex min-h-0 flex-col" : "space-y-4")}>
-          <Panel className={cn(focus && "flex min-h-0 flex-1 flex-col")}>
-            <PanelHeader>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <Panel className="flex min-h-0 flex-1 flex-col">
+            <PanelHeader className="h-14 shrink-0">
               <PanelTitle>识别明细</PanelTitle>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">{rows.length} 行 · 点击单元格可编辑</span>
+                <ColumnMenu fields={fields} hidden={hiddenFieldKeys} onToggle={toggleColumn} />
+                <Button
+                  size="sm"
+                  variant={locateEnabled ? "primary" : "secondary"}
+                  onClick={toggleLocate}
+                  title={
+                    locateEnabled
+                      ? "数据定位已开启：点击/悬停行可在原图定位高亮；点此关闭"
+                      : "数据定位已关闭：点此开启，恢复点击行在原图定位"
+                  }
+                >
+                  {locateEnabled ? <LocateFixed size={14} /> : <LocateOff size={14} />}数据定位
+                </Button>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -656,18 +744,19 @@ export function ReviewPage() {
                 </Button>
               </div>
             </PanelHeader>
-            <div className={cn("overflow-auto", focus ? "min-h-0 flex-1" : "max-h-[360px]")}>
+            <div className="min-h-0 flex-1 overflow-auto">
               <DataTable>
                 <thead className={tableHeadClass}>
                   <tr>
                     <th className={tableCellClass}>行</th>
-                    {fields.map((field) => (
+                    {mainFields.map((field) => (
                       <th key={field.key} className={tableCellClass}>
                         {field.label}
                       </th>
                     ))}
                     <th className={tableCellClass}>状态</th>
                     <th className={tableCellClass}>标识类别</th>
+                    {remarkField ? <th className={tableCellClass}>{remarkField.label}</th> : null}
                     <th className={tableCellClass}>操作</th>
                   </tr>
                 </thead>
@@ -680,17 +769,18 @@ export function ReviewPage() {
                           rowRefs.current[row.id] = node;
                         }}
                         className={cn("hover:bg-muted/40", activeRowId === row.id && "bg-warning/10")}
-                        onMouseEnter={() => rowSourceRegion(row) && setActiveRowId(row.id)}
-                        onClick={(event) => clickRow(row, event.target)}
+                        onMouseEnter={() => locateEnabled && rowSourceRegion(row) && setActiveRowId(row.id)}
+                        onClick={(event) => locateEnabled && clickRow(row, event.target)}
                       >
                         <td className={tableCellClass}>{index + 1}</td>
-                        {fields.map((field) => (
+                        {mainFields.map((field) => (
                           <FieldCell
                             key={field.key}
                             value={rowFieldValue(row, field)}
                             type={field.type === "number" ? "number" : "text"}
                             align={field.align ?? (field.type === "number" ? "right" : "left")}
                             disabled={!field.editable}
+                            widthClass={fieldCellWidthClass(field, true)}
                             onCommit={(next) => commitField(row.id, field, next)}
                           />
                         ))}
@@ -705,6 +795,16 @@ export function ReviewPage() {
                             ) : null}
                           </div>
                         </td>
+                        {remarkField ? (
+                          <FieldCell
+                            value={rowFieldValue(row, remarkField)}
+                            type={remarkField.type === "number" ? "number" : "text"}
+                            align={remarkField.align ?? (remarkField.type === "number" ? "right" : "left")}
+                            disabled={!remarkField.editable}
+                            widthClass={fieldCellWidthClass(remarkField)}
+                            onCommit={(next) => commitField(row.id, remarkField, next)}
+                          />
+                        ) : null}
                         <td className={tableCellClass}>
                           {deletingId === row.id ? (
                             <div className="flex items-center gap-1">
@@ -724,7 +824,7 @@ export function ReviewPage() {
                             </div>
                           ) : (
                             <div className="flex gap-1">
-                              {rowSourceRegion(row) ? (
+                              {locateEnabled && rowSourceRegion(row) ? (
                                 <Button
                                   size="icon"
                                   variant="ghost"
@@ -779,7 +879,8 @@ export function ReviewPage() {
                       </tr>
                       {draftAfterId === row.id ? (
                         <DraftRow
-                          fields={fields}
+                          mainFields={mainFields}
+                          remarkField={remarkField}
                           isPending={createRow.isPending}
                           onSave={saveDraft}
                           onCancel={() => setDraftAfterId(undefined)}
@@ -789,14 +890,15 @@ export function ReviewPage() {
                     ))
                   ) : draftAfterId === null ? null : (
                     <tr>
-                      <td className={tableCellClass} colSpan={4 + fields.length}>
+                      <td className={tableCellClass} colSpan={4 + visibleFields.length}>
                         <span className="text-muted-foreground">{isLoading ? "加载中..." : "该文档暂无识别行"}</span>
                       </td>
                     </tr>
                   )}
                   {draftAfterId === null ? (
                     <DraftRow
-                      fields={fields}
+                      mainFields={mainFields}
+                      remarkField={remarkField}
                       isPending={createRow.isPending}
                       onSave={saveDraft}
                       onCancel={() => setDraftAfterId(undefined)}
@@ -806,9 +908,12 @@ export function ReviewPage() {
               </DataTable>
             </div>
           </Panel>
+        </div>
+      </div>
 
-          {!focus ? (
-          <>
+      {/* 识别尝试 / 风险详情：移到原图+明细两列下方，整组底部并排展示（次要信息，不占首屏） */}
+      {!focus ? (
+        <div className="grid gap-4 lg:grid-cols-2">
           <Panel>
             <PanelHeader>
               <PanelTitle>识别尝试</PanelTitle>
@@ -847,10 +952,8 @@ export function ReviewPage() {
               <Button size="sm" variant="primary" onClick={() => setRiskOpen(true)}>查看风险说明</Button>
             </div>
           </Panel>
-          </>
-          ) : null}
         </div>
-      </div>
+      ) : null}
       <RiskDetailDrawer open={riskOpen} onClose={() => setRiskOpen(false)} reasons={riskReasons} />
     </div>
   );
@@ -873,21 +976,44 @@ function EmptyState({ batchId, message }: { batchId: string; message: string }) 
 /**
  * 内联新增草稿行：按 field-schema 渲染可编辑字段，本地 state 驱动。
  * 商品名称（name）为必填，未填时禁用保存（与 validateRow 的 INVALID_PRODUCT_NAME 规则一致）。
- * 列结构与明细表对齐：行号 + 各字段 + 状态/标识类别（合并占位）+ 操作。
+ * 列结构与明细表对齐：行号 + 主字段 + 状态/标识类别（合并占位）+ 备注（如显示）+ 操作。
  */
 function DraftRow({
-  fields,
+  mainFields,
+  remarkField,
   isPending,
   onSave,
   onCancel,
 }: {
-  fields: FieldDef[];
+  mainFields: FieldDef[];
+  remarkField: FieldDef | null;
   isPending: boolean;
   onSave: (values: Record<string, string>) => void;
   onCancel: () => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const nameFilled = (values.name ?? "").trim().length > 0;
+  const renderInput = (field: FieldDef, compact: boolean) => (
+    <td key={field.key} className={cn(tableCellClass, "p-1")}>
+      {field.editable ? (
+        <input
+          type={field.type === "number" ? "number" : "text"}
+          step={field.type === "number" ? "any" : undefined}
+          value={values[field.key] ?? ""}
+          onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+          placeholder={field.label}
+          autoFocus={field.key === "name"}
+          className={cn(
+            "h-7 w-full rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary",
+            fieldCellWidthClass(field, compact),
+            (field.align ?? (field.type === "number" ? "right" : "left")) === "right" && "text-right",
+          )}
+        />
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      )}
+    </td>
+  );
   return (
     <tr className="bg-primary/5">
       <td className={tableCellClass}>
@@ -895,29 +1021,11 @@ function DraftRow({
           新
         </span>
       </td>
-      {fields.map((field) => (
-        <td key={field.key} className={cn(tableCellClass, "p-1")}>
-          {field.editable ? (
-            <input
-              type={field.type === "number" ? "number" : "text"}
-              step={field.type === "number" ? "any" : undefined}
-              value={values[field.key] ?? ""}
-              onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-              placeholder={field.label}
-              autoFocus={field.key === "name"}
-              className={cn(
-                "h-7 w-full min-w-16 rounded border border-border bg-background px-2 text-xs outline-none focus:border-primary",
-                (field.align ?? (field.type === "number" ? "right" : "left")) === "right" && "text-right",
-              )}
-            />
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          )}
-        </td>
-      ))}
+      {mainFields.map((field) => renderInput(field, true))}
       <td className={tableCellClass} colSpan={2}>
         <span className="text-[11px] text-muted-foreground">待保存</span>
       </td>
+      {remarkField ? renderInput(remarkField, false) : null}
       <td className={tableCellClass}>
         <div className="flex gap-1">
           <Button
@@ -935,5 +1043,70 @@ function DraftRow({
         </div>
       </td>
     </tr>
+  );
+}
+
+/**
+ * 列显示菜单：勾选/取消勾选明细表的字段列（如隐藏「商品编码」「单价」「金额」）。
+ * 选择持久化在父组件并写入 localStorage；点击外部自动收起。
+ */
+function ColumnMenu({
+  fields,
+  hidden,
+  onToggle,
+}: {
+  fields: FieldDef[];
+  hidden: Set<string>;
+  onToggle: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const hiddenCount = fields.filter((field) => hidden.has(field.key)).length;
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocPointerDown(event: PointerEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onDocPointerDown);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => setOpen((value) => !value)}
+        title="选择明细表要显示的列"
+      >
+        <Columns3 size={14} />列显示{hiddenCount ? `（隐藏 ${hiddenCount}）` : ""}
+      </Button>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-1 w-44 rounded-md border border-border bg-surface p-1 shadow-lg">
+          {fields.map((field) => {
+            const visible = !hidden.has(field.key);
+            return (
+              <button
+                key={field.key}
+                type="button"
+                onClick={() => onToggle(field.key)}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+              >
+                <span
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                    visible ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface",
+                  )}
+                >
+                  {visible ? <Check size={11} /> : null}
+                </span>
+                <span className="truncate">{field.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
