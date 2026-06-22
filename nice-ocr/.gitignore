@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 无密钥配置模板纳入版本库，方便团队同步可配置项
+!.env.example
 
 # local database
 dev.db
