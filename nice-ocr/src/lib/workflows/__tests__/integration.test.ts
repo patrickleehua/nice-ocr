@@ -14,6 +14,7 @@ import { buildConsensusFlags, decideRowReview, shouldRunConsensus } from "../../
 import { resolveProviderPrompts } from "../../recognition/provider";
 import { defaultRecognitionPrompts } from "../../recognition/settings";
 import { auditRowByRules, buildAuditStats, findDuplicateRowIds } from "../../recognition/audit";
+import { serializeSourceRegion } from "../../recognition/source-region";
 
 const rollback = Symbol("rollback");
 
@@ -160,6 +161,45 @@ describe("workflow integration", () => {
         where: { entityType: "RecognitionRow", entityId: original.id, action: "exclude" },
       });
       assert.equal(excludeAuditCount, 1);
+    });
+  });
+
+  it("persists recognized row sourceRegionJson for image review positioning", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "source-region-test" } });
+      const document = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "source-region.jpg",
+          storedPath: "",
+          hash: "source-region-hash",
+          mimeType: "image/jpeg",
+          sizeBytes: 0,
+        },
+      });
+      const sourceRegion = {
+        version: 1 as const,
+        source: "model" as const,
+        kind: "row" as const,
+        box: { x: 0.12, y: 0.34, w: 0.56, h: 0.08 },
+        confidence: 0.72,
+      };
+
+      const row = await tx.recognitionRow.create({
+        data: {
+          batchId: batch.id,
+          documentId: document.id,
+          rowIndex: 1,
+          name: "苹果",
+          qty: 2,
+          price: 3,
+          amount: 6,
+          sourceRegionJson: serializeSourceRegion(sourceRegion),
+        },
+      });
+
+      const saved = await tx.recognitionRow.findUniqueOrThrow({ where: { id: row.id } });
+      assert.deepEqual(JSON.parse(saved.sourceRegionJson ?? "{}"), sourceRegion);
     });
   });
 

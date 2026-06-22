@@ -102,7 +102,7 @@ export function ImageViewer({
 
     setZoom(nextZoom);
     setPan({
-      x: (imageSize.width / 2 - regionCenterX) * nextZoom,
+      x: canvasRect.width / 2 - regionCenterX * nextZoom,
       y: canvasRect.height / 2 - regionCenterY * nextZoom,
     });
   }, [targetRegionId, regions, imageSize]);
@@ -194,7 +194,7 @@ export function ImageViewer({
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <div className="relative max-h-full max-w-full" style={{ transform: `scale(${zoom})` }}>
+            <div className="relative max-h-full max-w-full origin-top-left" style={{ transform: `scale(${zoom})` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 ref={imageRef}

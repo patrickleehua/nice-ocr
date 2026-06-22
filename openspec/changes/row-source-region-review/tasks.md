@@ -15,7 +15,7 @@
 - [x] 3.1 更新默认/动态识别提示词，要求模型尽量返回行级归一化区域
 - [x] 3.2 worker 创建 `RecognitionRow` 时写入 `sourceRegionJson`
 - [x] 3.3 确认 second pass/audit pass 不覆盖 canonical row 的区域来源
-- [ ] 3.4 单测或集成测试：模拟识别结果含 sourceRegion 时落库成功
+- [x] 3.4 单测或集成测试：模拟识别结果含 sourceRegion 时落库成功
 
 ## 4. ImageViewer overlay
 - [x] 4.1 `ImageViewer` 增加 regions、activeRegionId、targetRegionId、onRegionSelect props
