@@ -2,18 +2,15 @@
 
 import { ImageOff, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clampViewerZoom, regionStyle, viewportForRegion, type ImageRegionBox } from "@/components/ui/image-region";
 import { cn } from "@/lib/utils";
 
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 5;
 const STEP = 0.25;
-
-const clampZoom = (value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
 
 export interface ImageRegion {
   id: string;
   label?: string;
-  box: { x: number; y: number; w: number; h: number };
+  box: ImageRegionBox;
   tone?: "active" | "muted" | "flagged";
 }
 
@@ -72,7 +69,7 @@ export function ImageViewer({
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      setZoom((z) => clampZoom(z - Math.sign(event.deltaY) * STEP));
+      setZoom((z) => clampViewerZoom(z - Math.sign(event.deltaY) * STEP));
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -86,25 +83,9 @@ export function ImageViewer({
     if (!region || !canvas || !imageSize.width || !imageSize.height) return;
 
     const canvasRect = canvas.getBoundingClientRect();
-    const regionWidth = imageSize.width * region.box.w;
-    const regionHeight = imageSize.height * region.box.h;
-    const nextZoom = clampZoom(
-      Math.min(
-        3,
-        Math.max(
-          1.25,
-          Math.min(canvasRect.width / Math.max(regionWidth * 2.2, 1), canvasRect.height / Math.max(regionHeight * 4, 1)),
-        ),
-      ),
-    );
-    const regionCenterX = imageSize.width * (region.box.x + region.box.w / 2);
-    const regionCenterY = imageSize.height * (region.box.y + region.box.h / 2);
-
-    setZoom(nextZoom);
-    setPan({
-      x: canvasRect.width / 2 - regionCenterX * nextZoom,
-      y: canvasRect.height / 2 - regionCenterY * nextZoom,
-    });
+    const viewport = viewportForRegion(region.box, imageSize, { width: canvasRect.width, height: canvasRect.height });
+    setZoom(viewport.zoom);
+    setPan(viewport.pan);
   }, [targetRegionId, regions, imageSize]);
 
   useEffect(() => {
@@ -145,7 +126,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="放大"
-          onClick={() => setZoom((z) => clampZoom(z + STEP))}
+          onClick={() => setZoom((z) => clampViewerZoom(z + STEP))}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomIn size={15} />
@@ -153,7 +134,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="缩小"
-          onClick={() => setZoom((z) => clampZoom(z - STEP))}
+          onClick={() => setZoom((z) => clampViewerZoom(z - STEP))}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomOut size={15} />
@@ -219,12 +200,7 @@ export function ImageViewer({
                     "pointer-events-auto absolute rounded-sm border-2 bg-warning/25 shadow-[0_0_0_9999px_rgba(15,23,42,0.04)] transition-colors",
                     activeRegion.tone === "flagged" ? "border-danger-strong bg-danger/20" : "border-warning-strong",
                   )}
-                  style={{
-                    left: `${activeRegion.box.x * imageSize.width}px`,
-                    top: `${activeRegion.box.y * imageSize.height}px`,
-                    width: `${activeRegion.box.w * imageSize.width}px`,
-                    height: `${activeRegion.box.h * imageSize.height}px`,
-                  }}
+                  style={regionStyle(activeRegion.box, imageSize)}
                   title={activeRegion.label}
                 />
               ) : null}
