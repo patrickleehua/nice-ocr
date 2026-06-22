@@ -24,6 +24,19 @@ export function BatchStatusBadge({ status }: { status: BatchStatus }) {
   return <Badge tone={item.tone}>{item.label}</Badge>;
 }
 
+export function DocStatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; tone: "success" | "info" | "warning" | "danger" | "neutral" }> = {
+    uploaded: { label: "已上传", tone: "neutral" },
+    queued: { label: "排队中", tone: "neutral" },
+    processing: { label: "识别中", tone: "info" },
+    extracted: { label: "已识别", tone: "success" },
+    reviewed: { label: "已审核", tone: "success" },
+    failed: { label: "识别失败", tone: "danger" },
+  };
+  const item = map[status] ?? { label: status, tone: "neutral" as const };
+  return <Badge tone={item.tone}>{item.label}</Badge>;
+}
+
 export function RowStatusBadge({ status }: { status: RowStatus }) {
   const map = {
     pending: { label: "待审核", tone: "warning" as const },

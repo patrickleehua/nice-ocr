@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
-import { RiskBadge } from "@/components/ui/status";
+import { DocStatusBadge, RiskBadge } from "@/components/ui/status";
 import { SourceBadge } from "@/components/ui/source-badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { ExportMenu } from "@/components/results/export-menu";
@@ -53,6 +53,12 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
   const { data, isLoading } = useQuery<BatchDetail>({
     queryKey: ["batch", batchId],
     queryFn: () => apiGet(apiPaths.batch(batchId)),
+    // 有文档仍在排队/识别中时轮询刷新，让文件状态实时变化（排队→识别中→已识别）。
+    refetchInterval: (query) => {
+      const docs = query.state.data?.batch.documents ?? [];
+      const active = docs.some((doc) => doc.status === "queued" || doc.status === "processing");
+      return active ? 3000 : false;
+    },
   });
 
   const invalidate = () => {
@@ -186,7 +192,7 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                     <td className={cn(tableCellClass, "max-w-[200px]")}>
                       <SourceBadge source={doc} />
                     </td>
-                    <td className={tableCellClass}>{doc.status}</td>
+                    <td className={tableCellClass}><DocStatusBadge status={doc.status} /></td>
                     <td className={tableCellClass}><RiskBadge risk={doc.riskLevel} /></td>
                     <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
                     <td className={tableCellClass}>
@@ -273,7 +279,7 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
                     </dd>
                   </div>
                 ) : null}
-                <div><dt className="text-xs text-muted-foreground">状态</dt><dd className="mt-1">{selected.status}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">状态</dt><dd className="mt-1"><DocStatusBadge status={selected.status} /></dd></div>
                 <div><dt className="text-xs text-muted-foreground">风险等级</dt><dd className="mt-1"><RiskBadge risk={selected.riskLevel} /></dd></div>
                 <div><dt className="text-xs text-muted-foreground">更新时间</dt><dd className="mt-1">{formatDateTime(selected.updatedAt)}</dd></div>
                 <div className="col-span-2">
