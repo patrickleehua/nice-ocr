@@ -23,6 +23,7 @@ interface SettingsPayload {
     queueConcurrency: number;
     maxAttempts: number;
     backoffSeconds: number;
+    pdfRenderScale: number;
     primaryProviderKey: string | null;
     primaryModelId: string | null;
     secondaryProviderKey: string | null;
@@ -214,6 +215,7 @@ export function SettingsPage() {
               <NumberField label="并发数" value={draft.defaults.queueConcurrency} onChange={(value) => updateDefaults("queueConcurrency", value)} />
               <NumberField label="最大重试" value={draft.defaults.maxAttempts} onChange={(value) => updateDefaults("maxAttempts", value)} />
               <NumberField label="退避秒数" value={draft.defaults.backoffSeconds} onChange={(value) => updateDefaults("backoffSeconds", value)} />
+              <NumberField label="PDF渲染倍率" value={draft.defaults.pdfRenderScale} onChange={(value) => updateDefaults("pdfRenderScale", value)} />
             </div>
 
             <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3">
@@ -777,6 +779,7 @@ function testKey(provider: ProviderForm, model: ProviderModelForm) {
 function normalizeDefaults(defaults: SettingsPayload["defaults"]): SettingsPayload["defaults"] {
   return {
     ...defaults,
+    pdfRenderScale: defaults.pdfRenderScale ?? 4,
     primaryModelId: defaults.primaryModelId ?? null,
     secondaryModelId: defaults.secondaryModelId ?? null,
     auditModelId: defaults.auditModelId ?? null,

@@ -36,15 +36,25 @@ export interface IngestedImage {
   source: IngestSource;
 }
 
+export interface IngestOptions {
+  pdfRenderScale?: number;
+}
+
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 
 /**
  * PDF 渲染倍率（pdfjs 按 72DPI × scale 栅格化，输出 PNG 无损）。
  * PDF 是矢量/页面描述，转图片必然要栅格化，无法真正 100% 无损；倍率越高越逼近无损。
- * 固定 4（≈288DPI），偏「尽量无损」。
+ * 默认 4（≈288DPI），偏「尽量无损」；设置页可调到 1..6。
  * 倍率越高越清晰，但单页内存 / 渲染耗时 / 磁盘占用随之上升。
  */
-const PDF_RENDER_SCALE = 4;
+const DEFAULT_PDF_RENDER_SCALE = 4;
+
+function normalizePdfRenderScale(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_PDF_RENDER_SCALE;
+  return Math.min(6, Math.max(1, parsed));
+}
 
 function baseName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath;
@@ -135,9 +145,10 @@ async function* renderPdfPages(
   displayName: string,
   buffer: Buffer,
   source: { kind: "pdf" | "zip-pdf"; uploadName: string; entryPath?: string },
+  options: IngestOptions = {},
 ): AsyncGenerator<IngestedImage> {
   const doc = await pdf(new Uint8Array(buffer), {
-    scale: PDF_RENDER_SCALE,
+    scale: normalizePdfRenderScale(options.pdfRenderScale),
     docInitParams: pdfAssetUrls(),
   });
   const pageCount = doc.length;
@@ -165,6 +176,7 @@ export async function* ingestUploadStream(
   name: string,
   buffer: Buffer,
   mimeType?: string,
+  options: IngestOptions = {},
 ): AsyncGenerator<IngestedImage> {
   if (isZip(name, mimeType)) {
     const entries = unzipSync(new Uint8Array(buffer));
@@ -182,14 +194,14 @@ export async function* ingestUploadStream(
         };
       } else if (isPdf(base)) {
         // ZIP 内嵌 PDF：保留压缩包名 + 内部条目路径 + 页码。
-        yield* renderPdfPages(base, buf, { kind: "zip-pdf", uploadName: name, entryPath });
+        yield* renderPdfPages(base, buf, { kind: "zip-pdf", uploadName: name, entryPath }, options);
       }
     }
     return;
   }
 
   if (isPdf(name, mimeType)) {
-    yield* renderPdfPages(name, buffer, { kind: "pdf", uploadName: name });
+    yield* renderPdfPages(name, buffer, { kind: "pdf", uploadName: name }, options);
     return;
   }
 
@@ -208,9 +220,10 @@ export async function ingestUpload(
   name: string,
   buffer: Buffer,
   mimeType?: string,
+  options: IngestOptions = {},
 ): Promise<IngestedImage[]> {
   const images: IngestedImage[] = [];
-  for await (const image of ingestUploadStream(name, buffer, mimeType)) {
+  for await (const image of ingestUploadStream(name, buffer, mimeType, options)) {
     images.push(image);
   }
   return images;

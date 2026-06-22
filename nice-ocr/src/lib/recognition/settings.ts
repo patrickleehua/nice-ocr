@@ -45,6 +45,7 @@ export interface RecognitionDefaults {
   queueConcurrency: number;
   maxAttempts: number;
   backoffSeconds: number;
+  pdfRenderScale: number;
   /** 双模型交叉验证：pass1 主 provider/model；空则按优先级回退。 */
   primaryProviderKey: string | null;
   primaryModelId: string | null;
@@ -151,6 +152,7 @@ export const recognitionDefaults: RecognitionDefaults = {
   queueConcurrency: 3,
   maxAttempts: 3,
   backoffSeconds: 30,
+  pdfRenderScale: 4,
   primaryProviderKey: null,
   primaryModelId: null,
   secondaryProviderKey: null,
@@ -629,6 +631,7 @@ function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): Reco
     queueConcurrency: clampInt(input.queueConcurrency, 1, 12, recognitionDefaults.queueConcurrency),
     maxAttempts: clampInt(input.maxAttempts, 1, 10, recognitionDefaults.maxAttempts),
     backoffSeconds: clampInt(input.backoffSeconds, 1, 3600, recognitionDefaults.backoffSeconds),
+    pdfRenderScale: clampNumber(input.pdfRenderScale, 1, 6, recognitionDefaults.pdfRenderScale),
     primaryProviderKey: normalizePromptString(input.primaryProviderKey),
     primaryModelId: normalizePromptString(input.primaryModelId),
     secondaryProviderKey: normalizePromptString(input.secondaryProviderKey),

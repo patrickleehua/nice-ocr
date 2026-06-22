@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/client";
 import { storeOriginal } from "@/lib/files/storage";
 import { ingestUploadStream } from "@/lib/files/ingest";
 import { enforceRateLimit } from "@/lib/ratelimit";
+import { getRecognitionDefaults } from "@/lib/recognition/settings";
 
 export const runtime = "nodejs";
 // PDF 逐页渲染较耗时，放宽函数执行时长上限。
@@ -14,6 +15,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (limited) return limited;
 
   const { id: batchId } = await params;
+  const defaults = await getRecognitionDefaults();
   const formData = await request.formData();
   const files = formData.getAll("files").filter((item): item is File => item instanceof File);
 
@@ -28,7 +30,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   for (const file of files) {
     const buffer = Buffer.from(await file.arrayBuffer());
     try {
-      for await (const image of ingestUploadStream(file.name, buffer, file.type)) {
+      for await (const image of ingestUploadStream(file.name, buffer, file.type, {
+        pdfRenderScale: defaults.pdfRenderScale,
+      })) {
         const { hash, storedPath } = await storeOriginal(batchId, image.name, image.buffer);
         const document = await prisma.document.create({
           data: {
