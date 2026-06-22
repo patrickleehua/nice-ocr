@@ -136,6 +136,7 @@ model RecognitionRow {
   amount              Float                @default(0)
   remark              String?
   extraJson           String               @default("{}")
+  sourceRegionJson    String?
   status              String               @default("pending")
   reviewClass         String               @default("pending_review")
   riskLevel           String               @default("low")

@@ -72,6 +72,7 @@ export interface RecognitionRow {
   /** @deprecated 用 riskReasons 经字典渲染；保留兼容旧展示。 */
   conflictReason?: string;
   remark?: string;
+  sourceRegionJson?: string | null;
   /** 场景声明的非核心字段（来自 RecognitionRow.extraJson） */
   extra: Record<string, string>;
   updatedAt: string;

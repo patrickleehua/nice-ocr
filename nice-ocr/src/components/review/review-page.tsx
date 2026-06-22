@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
+import { Boxes, Check, ChevronLeft, ChevronRight, LocateFixed, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +12,7 @@ import { ModelErrorNote, ReasonList } from "@/components/ui/reason-badge";
 import { DataTable, tableCellClass, tableHeadClass } from "@/components/ui/table";
 import { FieldCell } from "@/components/ui/field-cell";
 import { ImageViewer } from "@/components/ui/image-viewer";
+import type { ImageRegion } from "@/components/ui/image-viewer";
 import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
 import { useSidebar } from "@/components/app-shell/sidebar-context";
@@ -51,6 +52,7 @@ interface ApiRow {
   auditState: string;
   auditNote?: string | null;
   auditSuggestionJson?: string | null;
+  sourceRegionJson?: string | null;
 }
 
 /** 取字段在审核行上的当前值：核心列直接取，非核心列从 extraJson 取。 */
@@ -111,6 +113,28 @@ const docFilters: Array<{ key: ReviewState | "all"; label: string }> = [
 
 const DOC_PAGE_SIZE = 8;
 
+function rowSourceRegion(row: ApiRow): ImageRegion["box"] | null {
+  if (!row.sourceRegionJson) return null;
+  try {
+    const parsed = JSON.parse(row.sourceRegionJson) as { box?: Partial<ImageRegion["box"]> };
+    const box = parsed.box;
+    if (!box) return null;
+    const x = Number(box.x);
+    const y = Number(box.y);
+    const w = Number(box.w);
+    const h = Number(box.h);
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+    const safeX = Math.min(1, Math.max(0, x));
+    const safeY = Math.min(1, Math.max(0, y));
+    const safeW = Math.min(1 - safeX, Math.max(0, w));
+    const safeH = Math.min(1 - safeY, Math.max(0, h));
+    if (safeW <= 0 || safeH <= 0) return null;
+    return { x: safeX, y: safeY, w: safeW, h: safeH };
+  } catch {
+    return null;
+  }
+}
+
 export function ReviewPage() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
@@ -129,6 +153,9 @@ export function ReviewPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // 新增草稿行：undefined=无草稿；null=末尾追加；string=在该行下方插入。
   const [draftAfterId, setDraftAfterId] = useState<string | null | undefined>(undefined);
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  const [targetRowId, setTargetRowId] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   // 作用域随 URL 切换时同步选中文档：带 documentId 深链则定位之，否则回到列表首项（清空旧批次的陈旧选中）。
   // render 阶段调整状态，优于 effect：避免跨批次陈旧 documentId 的一帧闪烁。
@@ -182,10 +209,32 @@ export function ReviewPage() {
 
   const document = docData?.document;
   const rows = document?.rows ?? [];
+  const imageRegions = useMemo<ImageRegion[]>(
+    () =>
+      rows
+        .map((row, index) => {
+          const box = rowSourceRegion(row);
+          if (!box) return null;
+          return {
+            id: row.id,
+            label: `第 ${index + 1} 行 ${row.name}`,
+            box,
+            tone: row.auditState === "flagged" ? "flagged" : "active",
+          } satisfies ImageRegion;
+        })
+        .filter((region): region is ImageRegion => Boolean(region)),
+    [rows],
+  );
 
   const fieldSchema = useFieldSchema({ batchId: activeDocBatchId });
   // 加载前用默认场景字段兜底，避免列结构跳变。
   const fields = fieldSchema.data?.fields ?? getScenarioFields(DEFAULT_SCENARIO_ID);
+
+  useEffect(() => {
+    setActiveRowId(null);
+    setTargetRowId(null);
+    rowRefs.current = {};
+  }, [selectedId]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
@@ -272,6 +321,26 @@ export function ReviewPage() {
     if (selectedIndex < 0) return;
     const next = filteredDocs[selectedIndex + offset];
     if (next) selectDoc(next.id);
+  }
+
+  function locateRow(row: ApiRow) {
+    if (!rowSourceRegion(row)) return;
+    setActiveRowId(row.id);
+    setTargetRowId(`${row.id}:${Date.now()}`);
+  }
+
+  function clickRow(row: ApiRow, target: EventTarget | null) {
+    if (!rowSourceRegion(row)) return;
+    if (target instanceof HTMLElement && target.closest("button,input,select,textarea,a")) {
+      setActiveRowId(row.id);
+      return;
+    }
+    locateRow(row);
+  }
+
+  function selectRegion(rowId: string) {
+    setActiveRowId(rowId);
+    rowRefs.current[rowId]?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
   // 专注模式联动侧边栏：进入折叠、退出展开，给原图与明细让出横向空间。
@@ -562,6 +631,10 @@ export function ReviewPage() {
             className="flex-1"
             src={selectedId ? apiPaths.documentImage(selectedId) : null}
             alt={document?.originalName ?? "单据原图"}
+            regions={imageRegions}
+            activeRegionId={activeRowId}
+            targetRegionId={targetRowId}
+            onRegionSelect={selectRegion}
           />
 
         </Panel>
@@ -602,7 +675,14 @@ export function ReviewPage() {
                   {rows.length ? (
                     rows.map((row, index) => (
                       <Fragment key={row.id}>
-                      <tr className="hover:bg-muted/40">
+                      <tr
+                        ref={(node) => {
+                          rowRefs.current[row.id] = node;
+                        }}
+                        className={cn("hover:bg-muted/40", activeRowId === row.id && "bg-warning/10")}
+                        onMouseEnter={() => rowSourceRegion(row) && setActiveRowId(row.id)}
+                        onClick={(event) => clickRow(row, event.target)}
+                      >
                         <td className={tableCellClass}>{index + 1}</td>
                         {fields.map((field) => (
                           <FieldCell
@@ -644,6 +724,19 @@ export function ReviewPage() {
                             </div>
                           ) : (
                             <div className="flex gap-1">
+                              {rowSourceRegion(row) ? (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    locateRow(row);
+                                  }}
+                                  title="在原图中定位此行"
+                                >
+                                  <LocateFixed size={14} />
+                                </Button>
+                              ) : null}
                               {row.auditState === "flagged" && row.auditSuggestionJson ? (
                                 <Button
                                   size="sm"

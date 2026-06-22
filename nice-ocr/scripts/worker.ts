@@ -33,6 +33,7 @@ import {
   findDuplicateRowIds,
   type AuditableRow,
 } from "@/lib/recognition/audit";
+import { serializeSourceRegion } from "@/lib/recognition/source-region";
 
 const workerId = `worker-${process.pid}`;
 
@@ -149,6 +150,7 @@ async function extractDocument(job: ClaimedJob) {
         riskLevel: validation.riskLevel,
         riskReasonsJson: JSON.stringify(validation.reasons),
         conflictState: validation.reasons.length ? "open" : "none",
+        sourceRegionJson: serializeSourceRegion(row.sourceRegion),
         // 非默认场景声明了 extra 字段时落库 extraJson；grocery 无 extra → 不写（保持默认 "{}"）。
         ...(hasExtra ? { extraJson: JSON.stringify(row.extra ?? {}) } : {}),
       },

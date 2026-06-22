@@ -14,7 +14,7 @@ export type ProviderModelSource = (typeof providerModelSources)[number];
 /** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
 export const defaultRecognitionPrompts = {
   systemPrompt:
-    "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。",
+    "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。",
   userPrompt: "请抽取这张单据图片中的日期和所有表格明细行。",
 } as const;
 
@@ -33,7 +33,7 @@ export function buildRecognitionPrompt(
     .map((field) => (field.recognitionHint ? `${field.label}（${field.recognitionHint}）` : field.label))
     .join("、");
   return {
-    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。`,
+    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。`,
     userPrompt: `请抽取这张「${scenario.name}」图片中的日期和所有表格明细行。`,
   };
 }
