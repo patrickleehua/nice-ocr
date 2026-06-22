@@ -1,5 +1,6 @@
 import type { AiProviderConfig, AiProviderModel } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
+import type { DbClient } from "@/lib/db/types";
 import { decryptSecret, encryptSecretForStorage } from "@/lib/crypto/secret";
 import { normalizeApprovalMode, type ApprovalMode } from "@/lib/recognition/review";
 import { DEFAULT_SCENARIO_ID, type FieldDef, type FieldScenario } from "@/lib/fields/field-schema";
@@ -187,6 +188,11 @@ export async function getRecognitionSettings(): Promise<RecognitionSettingsPaylo
     defaults: parseRecognitionDefaults(setting?.valueJson),
     providers: providers.map(toSafeProviderConfig),
   };
+}
+
+export async function getRecognitionDefaults(db: DbClient = prisma): Promise<RecognitionDefaults> {
+  const setting = await db.appSetting.findUnique({ where: { key: recognitionDefaultsKey } });
+  return parseRecognitionDefaults(setting?.valueJson);
 }
 
 export async function updateRecognitionDefaults(input: Partial<RecognitionDefaults>) {

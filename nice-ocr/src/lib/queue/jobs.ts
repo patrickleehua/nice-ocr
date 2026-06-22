@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/client";
 import type { DbClient } from "@/lib/db/types";
+import { getRecognitionDefaults } from "@/lib/recognition/settings";
 
 export async function enqueueRecognitionJob(
   documentId: string,
@@ -7,13 +8,14 @@ export async function enqueueRecognitionJob(
   type: "extract" | "second_pass" | "consensus" | "audit" = "extract",
   db: DbClient = prisma,
 ) {
+  const defaults = await getRecognitionDefaults(db);
   return db.recognitionJob.create({
     data: {
       documentId,
       batchId,
       type,
       status: "queued",
-      maxAttempts: 3,
+      maxAttempts: defaults.maxAttempts,
     },
   });
 }

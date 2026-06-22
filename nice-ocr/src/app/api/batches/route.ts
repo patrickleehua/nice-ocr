@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       data: {
         name: String(body.name ?? "未命名批次"),
         notes: body.notes ? String(body.notes) : null,
-        strategy: body.strategy ? String(body.strategy) : "balanced",
+        strategy: body.strategy ? String(body.strategy) : defaults.strategy,
         approvalMode,
         primaryProviderKey: pickKey(body.primaryProviderKey, defaults.primaryProviderKey),
         primaryModelId: pickKey(body.primaryModelId, defaults.primaryModelId),

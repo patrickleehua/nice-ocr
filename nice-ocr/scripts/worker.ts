@@ -12,7 +12,12 @@ import {
   type RecognitionProvider,
   type RecognitionProviderResult,
 } from "@/lib/recognition/provider";
-import { buildRecognitionPrompt, resolveAuditRecognitionTarget, resolveRecognitionProviders } from "@/lib/recognition/settings";
+import {
+  buildRecognitionPrompt,
+  getRecognitionDefaults,
+  resolveAuditRecognitionTarget,
+  resolveRecognitionProviders,
+} from "@/lib/recognition/settings";
 import { getScenario, getScenarioFields } from "@/lib/fields/field-schema";
 import { claimNextJob } from "@/lib/queue/jobs";
 import { validateRow } from "@/lib/validation/rules";
@@ -109,7 +114,7 @@ async function extractDocument(job: ClaimedJob) {
         ? primaryProvider
         : createRecognitionProvider(secondary, resolveProviderPrompts(secondary.provider, defaults, promptFallback), extraction);
     const second = await recognizePass(secondaryProvider, job, imageBase64, 2);
-    consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows);
+    consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows, defaults.amountTolerance);
   }
 
   await prisma.recognitionRow.deleteMany({
@@ -231,7 +236,7 @@ async function auditDocument(job: ClaimedJob) {
       );
       const auditRows = pass.result.extraction.rows;
       // 第三次是否复现了每个 ai_auto 行；未复现 → 不一致。
-      const reproduced = buildConsensusFlags(auditables, auditRows);
+      const reproduced = buildConsensusFlags(auditables, auditRows, defaults.amountTolerance);
       auditables.forEach((row, index) => {
         if (!reproduced[index]) {
           reasonsByRow.get(row.id as string)?.push("AI_DISAGREE");
@@ -308,10 +313,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * 回收孤儿 active job：被 kill / 崩溃中断的 job 会停在 status="active"，
  * 而 claimNextJob 只领 queued，没有回收就会永久卡死该文档。把 lockedAt 早于
- * 阈值（env.staleJobMs，默认 5min）的 active job 重置回 queued 使其可被重新领取。
+ * 阈值（按设置页退避秒数推导，至少 5min）的 active job 重置回 queued 使其可被重新领取。
  */
 async function reclaimStaleJobs() {
-  const threshold = new Date(Date.now() - env.staleJobMs);
+  const defaults = await getRecognitionDefaults();
+  const staleJobMs = Math.max(300_000, defaults.backoffSeconds * 1000 * defaults.maxAttempts * 2);
+  const threshold = new Date(Date.now() - staleJobMs);
   const reclaimed = await prisma.recognitionJob.updateMany({
     where: { status: "active", lockedAt: { lt: threshold } },
     data: { status: "queued", lockedAt: null, lockedBy: null },
@@ -335,13 +342,14 @@ async function handleClaimedJob(job: ClaimedJob) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const defaults = await getRecognitionDefaults();
     const shouldRetry = job.attemptsMade < job.maxAttempts;
     await prisma.recognitionJob.update({
       where: { id: job.id },
       data: {
         status: shouldRetry ? "queued" : "failed",
         lastError: message,
-        nextRunAt: new Date(Date.now() + 30_000 * Math.max(1, job.attemptsMade)),
+        nextRunAt: new Date(Date.now() + defaults.backoffSeconds * 1000 * Math.max(1, job.attemptsMade)),
         lockedAt: null,
         lockedBy: null,
       },
@@ -357,12 +365,12 @@ async function handleClaimedJob(job: ClaimedJob) {
 }
 
 async function main() {
-  const concurrency = env.workerConcurrency;
-  logger.info(`${workerId} started (concurrency=${concurrency})`);
+  logger.info(`${workerId} started`);
   await reclaimStaleJobs();
 
   const inFlight = new Set<Promise<void>>();
   while (!shuttingDown) {
+    const concurrency = (await getRecognitionDefaults()).queueConcurrency;
     // 填满并发槽：原子领取直到无 job 可领或槽位已满。
     while (!shuttingDown && inFlight.size < concurrency) {
       const job = await claimNextJob(workerId);

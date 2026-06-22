@@ -41,16 +41,10 @@ const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i;
 /**
  * PDF 渲染倍率（pdfjs 按 72DPI × scale 栅格化，输出 PNG 无损）。
  * PDF 是矢量/页面描述，转图片必然要栅格化，无法真正 100% 无损；倍率越高越逼近无损。
- * 默认 4（≈288DPI），偏「尽量无损」；可用环境变量 `PDF_RENDER_SCALE` 覆盖（最高 6≈432DPI）。
+ * 固定 4（≈288DPI），偏「尽量无损」。
  * 倍率越高越清晰，但单页内存 / 渲染耗时 / 磁盘占用随之上升。
- * 取值钳制在 [1, 6]，非法值回退默认，避免误配置导致 OOM。
  */
-const DEFAULT_PDF_RENDER_SCALE = 4;
-function pdfRenderScale(): number {
-  const raw = Number(process.env.PDF_RENDER_SCALE);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PDF_RENDER_SCALE;
-  return Math.min(6, Math.max(1, raw));
-}
+const PDF_RENDER_SCALE = 4;
 
 function baseName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath;
@@ -143,7 +137,7 @@ async function* renderPdfPages(
   source: { kind: "pdf" | "zip-pdf"; uploadName: string; entryPath?: string },
 ): AsyncGenerator<IngestedImage> {
   const doc = await pdf(new Uint8Array(buffer), {
-    scale: pdfRenderScale(),
+    scale: PDF_RENDER_SCALE,
     docInitParams: pdfAssetUrls(),
   });
   const pageCount = doc.length;
