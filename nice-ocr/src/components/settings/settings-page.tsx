@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Plus, Save, Settings2, TestTube2, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
@@ -716,14 +716,34 @@ function ProviderModelSelect({
 }
 
 function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [focused, value]);
+
   return (
     <label className="block text-sm">
       <span className="mb-1 block text-muted-foreground">{label}</span>
       <input
         className="h-9 w-full rounded-md border border-border bg-background px-3"
         type="number"
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
+        value={draft}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          if (draft.trim() === "" || !Number.isFinite(Number(draft))) {
+            setDraft(String(value));
+          }
+        }}
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next);
+          if (next.trim() === "") return;
+          const parsed = Number(next);
+          if (Number.isFinite(parsed)) onChange(parsed);
+        }}
       />
     </label>
   );
