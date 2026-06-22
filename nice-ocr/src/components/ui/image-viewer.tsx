@@ -124,7 +124,9 @@ export function ImageViewer({
       >
         {src && !error ? (
           <div
-            className="pointer-events-none absolute inset-4 flex items-center justify-center"
+            // 顶部对齐而非垂直居中：竖向票据在宽度受限时高度填不满，居中会在上方挤出大片空白；
+            // 紧贴工具栏向下展示更符合从上往下的阅读习惯。横向放大后仍可自由拖拽平移。
+            className="pointer-events-none absolute inset-4 flex items-start justify-center"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px)`,
             }}
