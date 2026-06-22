@@ -31,6 +31,7 @@ interface DashboardSummary {
     id: string;
     batchId: string;
     fileName: string;
+    status: string;
     risk: RiskLevel;
     reasons: string[];
     reasonFallback: string;
@@ -49,6 +50,7 @@ export function DashboardPage() {
     mutationFn: (documentId: string) => apiJson(apiPaths.documentRetry(documentId), { method: "POST" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
   });
+  const retryError = (retry.error as Error)?.message ?? null;
 
   const metrics = data?.metrics;
   const processedRows = metrics ? metrics.confirmedRows + metrics.pendingRows : 0;
@@ -170,6 +172,7 @@ export function DashboardPage() {
       <TableWrap>
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="text-sm font-semibold">最近失败 / 高风险</div>
+          {retryError ? <span className="text-xs text-danger">{retryError}</span> : null}
         </div>
         <DataTable>
           <thead className={tableHeadClass}>
@@ -183,33 +186,37 @@ export function DashboardPage() {
           </thead>
           <tbody>
             {data?.recentFailures.length ? (
-              data.recentFailures.map((doc) => (
-                <tr key={doc.id} className="hover:bg-muted/70">
-                  <td className={tableCellClass}>{doc.fileName}</td>
-                  <td className={tableCellClass}><RiskBadge risk={doc.risk} /></td>
-                  <td className={tableCellClass}>
-                    <ReasonList codes={doc.reasons} emptyText={doc.reasonFallback} />
-                  </td>
-                  <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
-                  <td className={tableCellClass}>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" asChild>
-                        <Link href={`/review?batchId=${doc.batchId}&documentId=${doc.id}`} title="到审核台查看原图并复核">
-                          <ShieldCheck size={14} />审核
-                        </Link>
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => retry.mutate(doc.id)}
-                        disabled={retry.isPending}
-                      >
-                        重试
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              data.recentFailures.map((doc) => {
+                const retryDisabled = retry.isPending || doc.status === "queued" || doc.status === "processing";
+                return (
+                  <tr key={doc.id} className="hover:bg-muted/70">
+                    <td className={tableCellClass}>{doc.fileName}</td>
+                    <td className={tableCellClass}><RiskBadge risk={doc.risk} /></td>
+                    <td className={tableCellClass}>
+                      <ReasonList codes={doc.reasons} emptyText={doc.reasonFallback} />
+                    </td>
+                    <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
+                    <td className={tableCellClass}>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" asChild>
+                          <Link href={`/review?batchId=${doc.batchId}&documentId=${doc.id}`} title="到审核台查看原图并复核">
+                            <ShieldCheck size={14} />审核
+                          </Link>
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => retry.mutate(doc.id)}
+                          disabled={retryDisabled}
+                          title={retryDisabled ? "文档已在队列中或正在处理" : "重新加入识别队列"}
+                        >
+                          重试
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             ) : (
               <tr>
                 <td className={tableCellClass} colSpan={5}>

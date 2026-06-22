@@ -2,12 +2,24 @@ import { prisma } from "@/lib/db/client";
 import type { DbClient } from "@/lib/db/types";
 import { getRecognitionDefaults } from "@/lib/recognition/settings";
 
+const IN_FLIGHT_JOB_STATUSES = ["queued", "active"] as const;
+
 export async function enqueueRecognitionJob(
   documentId: string,
   batchId: string,
   type: "extract" | "second_pass" | "consensus" | "audit" = "extract",
   db: DbClient = prisma,
 ) {
+  const existing = await db.recognitionJob.findFirst({
+    where: {
+      documentId,
+      type,
+      status: { in: [...IN_FLIGHT_JOB_STATUSES] },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (existing) return null;
+
   const defaults = await getRecognitionDefaults(db);
   return db.recognitionJob.create({
     data: {
@@ -37,10 +49,6 @@ export async function enqueueSecondPassIfNeeded(
 
 /** 入队一个文档的审核(二次复查)任务，避免重复排队。返回 null 表示已有未完成审核任务。 */
 export async function enqueueAuditJob(documentId: string, batchId: string, db: DbClient = prisma) {
-  const existing = await db.recognitionJob.count({
-    where: { documentId, type: "audit", status: { in: ["queued", "active"] } },
-  });
-  if (existing > 0) return null;
   return enqueueRecognitionJob(documentId, batchId, "audit", db);
 }
 

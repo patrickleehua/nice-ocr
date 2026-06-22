@@ -171,67 +171,71 @@ export function BatchDetailPage({ batchId }: { batchId: string }) {
             </thead>
             <tbody>
               {documents.length ? (
-                documents.map((doc) => (
-                  <tr
-                    key={doc.id}
-                    className={`cursor-pointer hover:bg-muted/70 ${doc.id === selectedId ? "bg-muted/50" : ""}`}
-                    onClick={() => openReview(doc.id)}
-                    title="查看原图并审核修改识别明细"
-                  >
-                    <td className={tableCellClass}>
-                      <Link
-                        href={reviewHref(doc.id)}
-                        onClick={(event) => event.stopPropagation()}
-                        className="inline-flex max-w-[260px] items-center gap-1.5 truncate font-medium text-primary hover:underline"
-                        title="查看原图并审核修改识别明细"
-                      >
-                        <Eye size={14} className="shrink-0" />
-                        <span className="truncate">{doc.originalName}</span>
-                      </Link>
-                    </td>
-                    <td className={cn(tableCellClass, "max-w-[200px]")}>
-                      <SourceBadge source={doc} />
-                    </td>
-                    <td className={tableCellClass}><DocStatusBadge status={doc.status} /></td>
-                    <td className={tableCellClass}><RiskBadge risk={doc.riskLevel} /></td>
-                    <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
-                    <td className={tableCellClass}>
-                      <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setOverride(doc.id);
-                          }}
-                          title="在右侧预览此文件"
+                documents.map((doc) => {
+                  const retryDisabled = retry.isPending || doc.status === "queued" || doc.status === "processing";
+                  return (
+                    <tr
+                      key={doc.id}
+                      className={`cursor-pointer hover:bg-muted/70 ${doc.id === selectedId ? "bg-muted/50" : ""}`}
+                      onClick={() => openReview(doc.id)}
+                      title="查看原图并审核修改识别明细"
+                    >
+                      <td className={tableCellClass}>
+                        <Link
+                          href={reviewHref(doc.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          className="inline-flex max-w-[260px] items-center gap-1.5 truncate font-medium text-primary hover:underline"
+                          title="查看原图并审核修改识别明细"
                         >
-                          预览
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            retry.mutate(doc.id);
-                          }}
-                          disabled={retry.isPending}
-                        >
-                          <RotateCcw size={14} />重试
-                        </Button>
-                        <Button size="sm" variant="ghost" asChild>
-                          <Link
-                            href={reviewHref(doc.id)}
-                            onClick={(event) => event.stopPropagation()}
-                            title="查看原图并审核修改识别明细"
+                          <Eye size={14} className="shrink-0" />
+                          <span className="truncate">{doc.originalName}</span>
+                        </Link>
+                      </td>
+                      <td className={cn(tableCellClass, "max-w-[200px]")}>
+                        <SourceBadge source={doc} />
+                      </td>
+                      <td className={tableCellClass}><DocStatusBadge status={doc.status} /></td>
+                      <td className={tableCellClass}><RiskBadge risk={doc.riskLevel} /></td>
+                      <td className={tableCellClass}>{formatDateTime(doc.updatedAt)}</td>
+                      <td className={tableCellClass}>
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOverride(doc.id);
+                            }}
+                            title="在右侧预览此文件"
                           >
-                            <Eye size={14} />查看/审核
-                          </Link>
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                            预览
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              retry.mutate(doc.id);
+                            }}
+                            disabled={retryDisabled}
+                            title={retryDisabled ? "文档已在队列中或正在处理" : "重新加入识别队列"}
+                          >
+                            <RotateCcw size={14} />重试
+                          </Button>
+                          <Button size="sm" variant="ghost" asChild>
+                            <Link
+                              href={reviewHref(doc.id)}
+                              onClick={(event) => event.stopPropagation()}
+                              title="查看原图并审核修改识别明细"
+                            >
+                              <Eye size={14} />查看/审核
+                            </Link>
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td className={tableCellClass} colSpan={6}>

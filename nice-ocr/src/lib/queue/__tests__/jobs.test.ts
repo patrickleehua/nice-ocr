@@ -19,17 +19,17 @@ async function withRollback(callback: (tx: Prisma.TransactionClient) => Promise<
 
 async function seedJobs(tx: Prisma.TransactionClient, jobCount: number) {
   const batch = await tx.batch.create({ data: { name: "claim-test" } });
-  const doc = await tx.document.create({
-    data: {
-      batchId: batch.id,
-      originalName: "t.png",
-      storedPath: "/tmp/t.png",
-      hash: `h-${batch.id}`,
-      mimeType: "image/png",
-      sizeBytes: 1,
-    },
-  });
   for (let i = 0; i < jobCount; i += 1) {
+    const doc = await tx.document.create({
+      data: {
+        batchId: batch.id,
+        originalName: `t-${i}.png`,
+        storedPath: `/tmp/t-${i}.png`,
+        hash: `h-${batch.id}-${i}`,
+        mimeType: "image/png",
+        sizeBytes: 1,
+      },
+    });
     await enqueueRecognitionJob(doc.id, batch.id, "extract", tx);
   }
 }
@@ -67,6 +67,32 @@ describe("claimNextJob 原子领取", () => {
       // 另一个 worker 此时领取应得到 null（唯一的 job 已是 active）。
       const again = await claimNextJob("worker-b", tx);
       assert.equal(again, null);
+    });
+  });
+
+  it("同一文档已有 queued/active extract 时不会重复入队", async () => {
+    await withRollback(async (tx) => {
+      const batch = await tx.batch.create({ data: { name: "dedupe-test" } });
+      const doc = await tx.document.create({
+        data: {
+          batchId: batch.id,
+          originalName: "dedupe.png",
+          storedPath: "/tmp/dedupe.png",
+          hash: `h-${batch.id}`,
+          mimeType: "image/png",
+          sizeBytes: 1,
+        },
+      });
+
+      const first = await enqueueRecognitionJob(doc.id, batch.id, "extract", tx);
+      const duplicateQueued = await enqueueRecognitionJob(doc.id, batch.id, "extract", tx);
+      const claimed = await claimNextJob("worker-a", tx);
+      const duplicateActive = await enqueueRecognitionJob(doc.id, batch.id, "extract", tx);
+
+      assert.ok(first);
+      assert.equal(duplicateQueued, null);
+      assert.equal(claimed?.id, first.id);
+      assert.equal(duplicateActive, null);
     });
   });
 });

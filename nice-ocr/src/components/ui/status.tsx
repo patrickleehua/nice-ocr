@@ -87,6 +87,7 @@ export function JobStatusBadge({ status }: { status: JobStatus }) {
     retrying: { label: "重试中", tone: "warning" as const },
     completed: { label: "成功", tone: "success" as const },
     failed: { label: "失败", tone: "danger" as const },
+    cancelled: { label: "已取消", tone: "neutral" as const },
   };
   return <Badge tone={map[status].tone}>{map[status].label}</Badge>;
 }

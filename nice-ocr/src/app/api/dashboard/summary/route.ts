@@ -97,6 +97,7 @@ export async function GET() {
       id: doc.id,
       batchId: doc.batchId,
       fileName: doc.originalName,
+      status: doc.status,
       risk: doc.riskLevel,
       // 返回原因码数组交前端经规则字典渲染；无原因码时给出兜底文案。
       reasons: parseReasons(doc.riskReasonsJson),

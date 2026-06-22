@@ -43,14 +43,27 @@ export async function retryJob(jobId: string, db: DbClient = prisma) {
   return updated;
 }
 
-/** 取消一个排队作业：删除 job，文档置 cancelled（保留文档便于后续在批次详情重新触发）。 */
+/** 取消一个排队作业：无尝试记录则删除；已有尝试记录则置 cancelled，文档置 cancelled。 */
 export async function cancelJob(jobId: string, db: DbClient = prisma) {
   const job = await db.recognitionJob.findUnique({ where: { id: jobId } });
   if (!job) throw notFound("作业不存在");
   if (job.status !== "queued") throw badRequest("仅排队中的作业可取消");
 
-  // 排队中的作业尚未产生 ExtractionAttempt，删除不触发 onDelete: Restrict。
-  await db.recognitionJob.delete({ where: { id: jobId } });
+  const attemptCount = await db.extractionAttempt.count({ where: { jobId } });
+  let result: { id: string; documentId: string; status: "deleted" | "cancelled" };
+  if (attemptCount === 0) {
+    const deleted = await db.recognitionJob.deleteMany({ where: { id: jobId, status: "queued" } });
+    if (deleted.count !== 1) throw badRequest("作业状态已变化，无法取消");
+    result = { id: jobId, documentId: job.documentId, status: "deleted" };
+  } else {
+    const updated = await db.recognitionJob.updateMany({
+      where: { id: jobId, status: "queued" },
+      data: { status: "cancelled", lockedAt: null, lockedBy: null },
+    });
+    if (updated.count !== 1) throw badRequest("作业状态已变化，无法取消");
+    result = { id: jobId, documentId: job.documentId, status: "cancelled" };
+  }
+
   await db.document.update({ where: { id: job.documentId }, data: { status: "cancelled" } });
   await db.auditLog.create({
     data: {
@@ -60,7 +73,7 @@ export async function cancelJob(jobId: string, db: DbClient = prisma) {
       beforeJson: JSON.stringify({ status: job.status, documentId: job.documentId }),
     },
   });
-  return { id: jobId, documentId: job.documentId };
+  return result;
 }
 
 /** 批量重试所有失败作业（可限定批次）。返回受影响数量。 */

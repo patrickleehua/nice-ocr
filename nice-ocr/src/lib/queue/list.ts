@@ -8,8 +8,8 @@ import { prisma } from "@/lib/db/client";
  * 供队列页可视化与维护。读操作无需事务，直接走默认 prisma。
  */
 
-/** 队列页可筛选的作业状态集合（与 worker 写入的状态一致）。 */
-export const QUEUE_JOB_STATUSES = ["queued", "active", "completed", "failed"] as const;
+/** 队列页可筛选的作业状态集合（与 worker / 维护动作写入的状态一致）。 */
+export const QUEUE_JOB_STATUSES = ["queued", "active", "completed", "failed", "cancelled"] as const;
 /** 作业类型集合（extract/second_pass/consensus/audit）。 */
 export const QUEUE_JOB_TYPES = ["extract", "second_pass", "consensus", "audit"] as const;
 

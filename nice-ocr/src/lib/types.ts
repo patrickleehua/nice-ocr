@@ -9,7 +9,7 @@ export type BatchStatus =
 
 export type RiskLevel = "low" | "medium" | "high";
 export type RowStatus = "pending" | "confirmed" | "needs_review" | "conflict" | "excluded";
-export type JobStatus = "queued" | "active" | "retrying" | "completed" | "failed";
+export type JobStatus = "queued" | "active" | "retrying" | "completed" | "failed" | "cancelled";
 
 export type RecognitionStrategy = "fast" | "balanced" | "consensus" | "manual";
 

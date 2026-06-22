@@ -75,18 +75,43 @@ describe("retryJob 重试失败作业", () => {
 });
 
 describe("cancelJob 取消排队作业", () => {
-  it("删除 queued 作业并把文档置 cancelled", async () => {
+  it("删除没有尝试记录的 queued 作业并把文档置 cancelled", async () => {
     await withRollback(async (tx) => {
       const { jobId, documentId } = await seedJob(tx, "queued", "queued");
 
       const result = await cancelJob(jobId, tx);
       assert.equal(result.id, jobId);
+      assert.equal(result.status, "deleted");
 
       const job = await tx.recognitionJob.findUnique({ where: { id: jobId } });
-      assert.equal(job, null, "job 应被删除");
+      assert.equal(job, null, "无尝试记录的 job 应从队列删除");
 
       const doc = await tx.document.findUnique({ where: { id: documentId } });
       assert.equal(doc?.status, "cancelled");
+    });
+  });
+
+  it("已有尝试记录的 queued 作业不可物理删除，改置 cancelled", async () => {
+    await withRollback(async (tx) => {
+      const { jobId, documentId } = await seedJob(tx, "queued", "queued");
+      await tx.extractionAttempt.create({
+        data: {
+          documentId,
+          jobId,
+          providerKey: "test",
+          model: "test-model",
+          promptVersion: "v1",
+          schemaVersion: "v1",
+          strategy: "balanced",
+          status: "failed",
+        },
+      });
+
+      const result = await cancelJob(jobId, tx);
+      assert.equal(result.status, "cancelled");
+
+      const job = await tx.recognitionJob.findUnique({ where: { id: jobId } });
+      assert.equal(job?.status, "cancelled");
     });
   });
 

@@ -104,6 +104,7 @@ describe("workflow integration", () => {
       const duplicateSecondPass = await enqueueSecondPassIfNeeded(document.id, batch.id, tx);
       const claimed = await claimNextJob("worker-test", tx);
 
+      assert.ok(job);
       assert.equal(firstSecondPass?.type, "second_pass");
       assert.equal(duplicateSecondPass, null);
       assert.equal(claimed?.id, job.id);

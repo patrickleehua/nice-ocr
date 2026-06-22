@@ -48,6 +48,7 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "active", label: "处理中" },
   { value: "failed", label: "失败" },
   { value: "completed", label: "成功" },
+  { value: "cancelled", label: "已取消" },
 ];
 
 const TYPE_FILTERS: { value: string; label: string }[] = [
@@ -64,6 +65,7 @@ const OVERVIEW: { key: string; label: string; className: string }[] = [
   { key: "active", label: "处理中", className: "bg-info-soft text-info-strong" },
   { key: "failed", label: "失败", className: "bg-danger-soft text-danger-strong" },
   { key: "completed", label: "已完成", className: "bg-success-soft text-success-strong" },
+  { key: "cancelled", label: "已取消", className: "bg-muted text-muted-foreground" },
 ];
 
 const PAGE_SIZE = 20;
