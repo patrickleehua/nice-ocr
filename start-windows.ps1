@@ -72,6 +72,88 @@ function Start-Terminal {
   ) | Out-Null
 }
 
+function Stop-Pids {
+  param(
+    [int[]]$Pids,
+    [string]$Label
+  )
+
+  $uniquePids = @($Pids | Where-Object { $_ -and $_ -ne $PID } | Select-Object -Unique)
+  if ($uniquePids.Count -eq 0) {
+    Write-Info "No old $Label process found."
+    return
+  }
+
+  Write-Info "Stopping old $Label process(es): $($uniquePids -join ', ')"
+  foreach ($processId in $uniquePids) {
+    Stop-ProcessTree -ProcessId $processId
+  }
+}
+
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+
+  $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty ProcessId)
+
+  foreach ($childId in $children) {
+    Stop-ProcessTree -ProcessId ([int]$childId)
+  }
+
+  if ($ProcessId -eq $PID) {
+    return
+  }
+
+  try {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+  } catch {
+    Write-Host "    Could not stop PID ${ProcessId}: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
+
+function Stop-ProcessByPort {
+  param(
+    [int]$Port,
+    [string]$Label
+  )
+
+  $processIds = @()
+  if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+    try {
+      $processIds = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique)
+    } catch {
+      $processIds = @()
+    }
+  }
+
+  if ($processIds.Count -eq 0 -and (Get-Command netstat -ErrorAction SilentlyContinue)) {
+    $processIds = @(netstat -ano -p tcp |
+      Select-String "[:.]$Port\s+.*LISTENING\s+(\d+)$" |
+      ForEach-Object { [int]$_.Matches[0].Groups[1].Value } |
+      Select-Object -Unique)
+  }
+
+  Stop-Pids -Pids $processIds -Label "$Label on port $Port"
+}
+
+function Stop-OldWorker {
+  param([string]$ProjectDir)
+
+  $projectPattern = [regex]::Escape($ProjectDir)
+  $workerPattern = "pnpm(?:\.cmd)?\s+worker|scripts[\\/]+worker\.ts"
+  $processIds = @(Get-CimInstance Win32_Process |
+    Where-Object {
+      $_.ProcessId -ne $PID -and
+      $_.CommandLine -and
+      $_.CommandLine -match $projectPattern -and
+      $_.CommandLine -match $workerPattern
+    } |
+    Select-Object -ExpandProperty ProcessId -Unique)
+
+  Stop-Pids -Pids $processIds -Label "worker"
+}
+
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AppDir = Join-Path $RootDir "nice-ocr"
 $OcrDir = Join-Path $AppDir "tools\ocr-layout"
@@ -141,6 +223,11 @@ if (-not $SkipOcr -and (Test-Path (Join-Path $OcrDir "server.py"))) {
     $ocrEnabled = $true
   }
 }
+
+Write-Step "Stopping old services"
+Stop-ProcessByPort -Port 3000 -Label "web"
+Stop-ProcessByPort -Port 8077 -Label "OCR layout service"
+Stop-OldWorker -ProjectDir $AppDir
 
 Write-Step "Starting services"
 if ($ocrEnabled) {

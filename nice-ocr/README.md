@@ -82,7 +82,7 @@ pnpm worker
 
 ## 本机启动脚本
 
-仓库根目录提供了两个启动脚本，会检查依赖、准备 `.env`、安装 Node 依赖、同步 Prisma，并分别启动 Web 与 worker。`tools/ocr-layout` 的 PaddleOCR 版面服务会在检测到 Python 3.10-3.12 时自动创建虚拟环境并启动；没有 Python 时会跳过，worker 会回退到模型坐标。
+仓库根目录提供了两个启动脚本，会检查依赖、准备 `.env`、安装 Node 依赖、同步 Prisma，启动前清理旧的 Web/OCR/worker 进程，并分别启动 Web 与 worker。`tools/ocr-layout` 的 PaddleOCR 版面服务会在检测到 Python 3.10-3.12 时自动创建虚拟环境并启动；没有 Python 时会跳过，worker 会回退到模型坐标。
 
 Windows PowerShell：
 

@@ -67,6 +67,103 @@ end tell
 EOF
 }
 
+kill_pids() {
+  local label="$1"
+  shift
+
+  if [ "$#" -eq 0 ]; then
+    info "No old $label process found."
+    return 0
+  fi
+
+  local all_pids pid alive_pids=()
+  all_pids="$(
+    for pid in "$@"; do
+      printf '%s\n' "$pid"
+      collect_descendants "$pid"
+    done | sort -nu | grep -v "^$$$" || true
+  )"
+
+  if [ -z "$all_pids" ]; then
+    info "No old $label process found."
+    return 0
+  fi
+
+  # shellcheck disable=SC2086
+  set -- $all_pids
+
+  info "Stopping old $label process(es): $*"
+  kill -TERM "$@" 2>/dev/null || true
+  sleep 1
+
+  for pid in "$@"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      alive_pids+=("$pid")
+    fi
+  done
+
+  if [ "${#alive_pids[@]}" -gt 0 ]; then
+    kill -KILL "${alive_pids[@]}" 2>/dev/null || true
+  fi
+}
+
+collect_descendants() {
+  local parent="$1"
+  local children child
+
+  if ! command -v pgrep >/dev/null 2>&1; then
+    return 0
+  fi
+
+  children="$(pgrep -P "$parent" 2>/dev/null || true)"
+  if [ -z "$children" ]; then
+    return 0
+  fi
+
+  for child in $children; do
+    printf '%s\n' "$child"
+    collect_descendants "$child"
+  done
+}
+
+stop_port() {
+  local port="$1"
+  local label="$2"
+  local pids
+
+  if ! command -v lsof >/dev/null 2>&1; then
+    info "lsof not found; cannot check port $port for old $label."
+    return 0
+  fi
+
+  pids="$(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -z "$pids" ]; then
+    kill_pids "$label on port $port"
+    return 0
+  fi
+
+  # shellcheck disable=SC2086
+  kill_pids "$label on port $port" $pids
+}
+
+stop_worker() {
+  local pids=()
+  local pid command
+
+  while read -r pid command; do
+    if [ -z "${pid:-}" ] || [ "$pid" = "$$" ]; then
+      continue
+    fi
+    case "$command" in
+      *"$APP_DIR"*"pnpm worker"*|*"$APP_DIR"*"scripts/worker.ts"*)
+        pids+=("$pid")
+        ;;
+    esac
+  done < <(ps -axo pid=,command=)
+
+  kill_pids "worker" "${pids[@]}"
+}
+
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$ROOT_DIR/nice-ocr"
 OCR_DIR="$APP_DIR/tools/ocr-layout"
@@ -136,6 +233,11 @@ if [ "$SKIP_OCR" -eq 0 ] && [ -f "$OCR_DIR/server.py" ]; then
     echo "    Install Python 3.10-3.12 if you want precise row positioning." >&2
   fi
 fi
+
+step "Stopping old services"
+stop_port 3000 "web"
+stop_port 8077 "OCR layout service"
+stop_worker
 
 step "Starting services"
 OCR_LAYOUT_URL_VALUE=""
