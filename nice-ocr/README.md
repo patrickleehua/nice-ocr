@@ -80,6 +80,38 @@ cd nice-ocr
 pnpm worker
 ```
 
+## 本机启动脚本
+
+仓库根目录提供了两个启动脚本，会检查依赖、准备 `.env`、安装 Node 依赖、同步 Prisma，并分别启动 Web 与 worker。`tools/ocr-layout` 的 PaddleOCR 版面服务会在检测到 Python 3.10-3.12 时自动创建虚拟环境并启动；没有 Python 时会跳过，worker 会回退到模型坐标。
+
+Windows PowerShell：
+
+```powershell
+.\start-windows.ps1
+```
+
+macOS：
+
+```bash
+./start-mac.command
+```
+
+依赖检查范围：
+
+- 必需：Node.js >= 22、pnpm（缺失时脚本会尝试用 Corepack 启用）。
+- 自动准备：`nice-ocr/.env`、`pnpm install`、`pnpm db:generate`、`pnpm db:push`。
+- 可选 OCR：Python 3.10-3.12、`tools/ocr-layout/requirements.txt` 内的 PaddleOCR/FastAPI/Uvicorn/Pillow。
+
+脚本不会自动执行 `pnpm db:seed`，避免覆盖本地业务数据。需要跳过耗时步骤时：
+
+```powershell
+.\start-windows.ps1 -SkipInstall -SkipOcr
+```
+
+```bash
+./start-mac.command --skip-install --skip-ocr
+```
+
 首次使用前进入 `/settings` 配置 AI Provider。Provider 的 Base URL、API Key、协议、启用状态、模型目录和提示词都存入数据库，不依赖 `.env`。
 
 ## 常用命令
