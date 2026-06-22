@@ -1,5 +1,5 @@
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 5;
+const MAX_ZOOM = 8;
 
 export interface ImageRegionBox {
   x: number;

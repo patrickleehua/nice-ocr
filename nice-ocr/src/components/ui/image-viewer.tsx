@@ -6,6 +6,12 @@ import { clampViewerZoom, regionStyle, viewportForRegion, type ImageRegionBox } 
 import { cn } from "@/lib/utils";
 
 const STEP = 0.25;
+/** 滚轮/触摸板捏合的缩放灵敏度（越小越温和）：按 deltaY 做指数比例缩放，避免捏合骤变。 */
+const WHEEL_SENSITIVITY = 0.0015;
+/** 工具栏快捷缩放倍数。 */
+const QUICK_ZOOMS = [0.5, 1, 2, 4] as const;
+/** 画布内边距（与 inset-4 对应），用于把视口中心换算到缩放坐标系。 */
+const CANVAS_INSET = 16;
 
 export interface ImageRegion {
   id: string;
@@ -43,6 +49,16 @@ export function ImageViewer({
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  // 镜像最新 zoom/pan/imageSize，供原生 wheel 监听与稳定的 zoomTo 在事件回调中读取（无需重绑事件）。
+  // 在 effect 中同步而非 render 期写入，事件总在提交后触发，读到的即最新值。
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  const imageSizeRef = useRef(imageSize);
+  useEffect(() => {
+    zoomRef.current = zoom;
+    panRef.current = pan;
+    imageSizeRef.current = imageSize;
+  }, [zoom, pan, imageSize]);
 
   // 切换图片时重置缩放与错误态（渲染期同步调整，避免 effect 级联渲染）。
   if (src !== prevSrc) {
@@ -61,6 +77,26 @@ export function ImageViewer({
     setImageSize({ width: img.clientWidth, height: img.clientHeight });
   }, []);
 
+  // 统一缩放入口：以画布视口中心为锚点缩放（同步调整 pan，使中心点内容不动），
+  // 而非默认的左上角缩放。供按钮、快捷倍数与滚轮共用。
+  const zoomTo = useCallback((next: number) => {
+    const z0 = zoomRef.current;
+    const z1 = clampViewerZoom(next);
+    if (z1 === z0) return;
+    const canvas = canvasRef.current;
+    const size = imageSizeRef.current;
+    if (canvas && size.width) {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = z1 / z0;
+      // 视口中心换算到缩放坐标系：水平方向 flex 居中已抵消偏移（取图片中心），垂直方向扣除顶部内边距。
+      const anchorX = size.width / 2;
+      const anchorY = rect.height / 2 - CANVAS_INSET;
+      const p0 = panRef.current;
+      setPan({ x: anchorX - ratio * (anchorX - p0.x), y: anchorY - ratio * (anchorY - p0.y) });
+    }
+    setZoom(z1);
+  }, []);
+
   // Ctrl+滚轮 / 触摸板捏合缩放：必须用原生「非 passive」监听，React 合成 onWheel 是 passive，
   // preventDefault 无效会导致整页一起缩放。这里只缩放画布内图片，并阻止浏览器默认页面缩放。
   useEffect(() => {
@@ -69,11 +105,12 @@ export function ImageViewer({
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      setZoom((z) => clampViewerZoom(z - Math.sign(event.deltaY) * STEP));
+      // 指数比例缩放：按 deltaY 大小温和变化，触摸板捏合不再骤变，且围绕视口中心。
+      zoomTo(zoomRef.current * Math.exp(-event.deltaY * WHEEL_SENSITIVITY));
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [zoomTo]);
 
   useEffect(() => {
     if (!targetRegionId) return;
@@ -126,7 +163,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="放大"
-          onClick={() => setZoom((z) => clampViewerZoom(z + STEP))}
+          onClick={() => zoomTo(zoomRef.current + STEP)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomIn size={15} />
@@ -134,7 +171,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="缩小"
-          onClick={() => setZoom((z) => clampViewerZoom(z - STEP))}
+          onClick={() => zoomTo(zoomRef.current - STEP)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomOut size={15} />
@@ -150,7 +187,24 @@ export function ImageViewer({
         >
           <Maximize2 size={15} />
         </button>
-        <span className="ml-1 text-xs text-muted-foreground">{Math.round(zoom * 100)}%</span>
+        <span className="ml-1 w-11 text-xs tabular-nums text-muted-foreground">{Math.round(zoom * 100)}%</span>
+        <div className="ml-1 flex items-center gap-0.5">
+          {QUICK_ZOOMS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => zoomTo(value)}
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[11px] tabular-nums transition-colors",
+                Math.abs(zoom - value) < 0.01
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {value * 100}%
+            </button>
+          ))}
+        </div>
         <span className="ml-auto text-[11px] text-muted-foreground">Ctrl+滚轮缩放 · 放大后可拖拽</span>
       </div>
 
@@ -174,7 +228,6 @@ export function ImageViewer({
               transform: `translate(${pan.x}px, ${pan.y}px)`,
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <div className="relative max-h-full max-w-full origin-top-left" style={{ transform: `scale(${zoom})` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
