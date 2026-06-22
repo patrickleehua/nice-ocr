@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import threading
 from functools import lru_cache
 from typing import Any
 
@@ -27,6 +28,10 @@ from PIL import Image
 OCR_LANG = os.environ.get("OCR_LAYOUT_LANG", "ch")
 
 app = FastAPI(title="nice-ocr layout service")
+
+# PaddleOCR 预测器非线程安全：FastAPI 把同步接口丢线程池并行执行，worker 并发(默认 3)会同时
+# 打多个 /layout，多线程同时 predict 同一实例会偶发 500。用全局锁串行化（OCR 本就 CPU 密集）。
+_ocr_lock = threading.Lock()
 
 
 class LayoutRequest(BaseModel):
@@ -103,6 +108,12 @@ def _clamp01(v: float) -> float:
 def _run_ocr(image_path: str) -> list[tuple[list[list[float]], str, float]]:
     """统一返回 [(poly4, text, score), ...]，兼容 2.x / 3.x。"""
     ocr = get_ocr()
+    # 串行化推理：预测器非线程安全，并发请求必须排队。
+    with _ocr_lock:
+        return _run_ocr_locked(ocr, image_path)
+
+
+def _run_ocr_locked(ocr, image_path: str) -> list[tuple[list[list[float]], str, float]]:
     lines: list[tuple[list[list[float]], str, float]] = []
 
     # 3.x: predict 返回 list[dict|Result]，字段含 rec_texts / rec_scores / rec_polys(或 dt_polys)
