@@ -1,6 +1,7 @@
 import { cleanProductCode } from "@/lib/validation/rules";
 
 export type ApprovalMode = "manual" | "hybrid" | "auto";
+export type RecognitionStrategy = "fast" | "balanced" | "consensus" | "manual";
 export type ReviewClass = "ai_auto" | "human" | "pending_review" | "conflict";
 export type RowStatus = "pending" | "confirmed" | "needs_review" | "conflict" | "excluded";
 export type RiskLevel = "low" | "medium" | "high";
@@ -19,6 +20,16 @@ export function normalizeApprovalMode(value: string | null | undefined): Approva
 /** 该模式是否需要双次识别做一致性比对。 */
 export function requiresConsensus(mode: ApprovalMode): boolean {
   return mode !== "manual";
+}
+
+export function shouldRunConsensus(
+  strategy: RecognitionStrategy,
+  mode: ApprovalMode,
+  hasAutoCandidate: boolean,
+): boolean {
+  if (mode === "manual" || strategy === "manual" || strategy === "fast") return false;
+  if (strategy === "consensus") return true;
+  return hasAutoCandidate;
 }
 
 /**

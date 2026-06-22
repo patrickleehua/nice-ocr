@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/client";
-import { getRecognitionSettings } from "@/lib/recognition/settings";
+import { getRecognitionSettings, normalizeRecognitionStrategy } from "@/lib/recognition/settings";
 import { normalizeApprovalMode } from "@/lib/recognition/review";
 import { getExportTemplate } from "@/lib/workflows/export-templates";
 import { handleRoute, parseJson } from "@/lib/api/http";
@@ -81,6 +81,9 @@ export async function POST(request: Request) {
     const approvalMode = body.approvalMode
       ? normalizeApprovalMode(String(body.approvalMode))
       : defaults.approvalMode;
+    const strategy = body.strategy
+      ? normalizeRecognitionStrategy(String(body.strategy), defaults.strategy)
+      : defaults.strategy;
     const pickKey = (value: unknown, fallback: string | null) => {
       const normalized = value == null ? "" : String(value).trim();
       return normalized ? normalized : fallback;
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
       data: {
         name: String(body.name ?? "未命名批次"),
         notes: body.notes ? String(body.notes) : null,
-        strategy: body.strategy ? String(body.strategy) : defaults.strategy,
+        strategy,
         approvalMode,
         primaryProviderKey: pickKey(body.primaryProviderKey, defaults.primaryProviderKey),
         primaryModelId: pickKey(body.primaryModelId, defaults.primaryModelId),

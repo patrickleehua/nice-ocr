@@ -7,9 +7,11 @@ import { DEFAULT_SCENARIO_ID, type FieldDef, type FieldScenario } from "@/lib/fi
 
 export const supportedProviderProtocols = ["openai_responses", "anthropic_messages"] as const;
 export const providerModelSources = ["manual", "imported"] as const;
+export const recognitionStrategies = ["fast", "balanced", "consensus", "manual"] as const;
 
 export type ProviderProtocol = (typeof supportedProviderProtocols)[number];
 export type ProviderModelSource = (typeof providerModelSources)[number];
+export type RecognitionStrategy = (typeof recognitionStrategies)[number];
 
 /** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
 export const defaultRecognitionPrompts = {
@@ -39,7 +41,7 @@ export function buildRecognitionPrompt(
 }
 
 export interface RecognitionDefaults {
-  strategy: "fast" | "balanced" | "consensus" | "manual";
+  strategy: RecognitionStrategy;
   approvalMode: ApprovalMode;
   amountTolerance: number;
   queueConcurrency: number;
@@ -175,6 +177,10 @@ export function isProviderProtocol(value: string): value is ProviderProtocol {
 
 export function isProviderModelSource(value: string): value is ProviderModelSource {
   return providerModelSources.includes(value as ProviderModelSource);
+}
+
+export function normalizeRecognitionStrategy(value: unknown, fallback: RecognitionStrategy = "balanced"): RecognitionStrategy {
+  return recognitionStrategies.includes(value as RecognitionStrategy) ? (value as RecognitionStrategy) : fallback;
 }
 
 export async function getRecognitionSettings(): Promise<RecognitionSettingsPayload> {
@@ -583,7 +589,7 @@ function normalizeProviderInput(input: AiProviderConfigInput) {
     baseUrl: normalizeOptionalString(input.baseUrl) ?? defaultBaseUrl(protocol),
     enabled: Boolean(input.enabled),
     priority: clampInt(input.priority, 1, 999, 100),
-    temperature: input.temperature == null ? null : Number(input.temperature),
+    temperature: clampOptionalNumber(input.temperature, 0, 2),
     maxOutputTokens: clampInt(input.maxOutputTokens, 256, 16000, 2000),
     systemPrompt: normalizePromptString(input.systemPrompt),
     userPrompt: normalizePromptString(input.userPrompt),
@@ -621,9 +627,7 @@ export function parseRecognitionDefaults(raw?: string | null): RecognitionDefaul
 }
 
 function normalizeRecognitionDefaults(input: Partial<RecognitionDefaults>): RecognitionDefaults {
-  const strategy = ["fast", "balanced", "consensus", "manual"].includes(String(input.strategy))
-    ? (input.strategy as RecognitionDefaults["strategy"])
-    : recognitionDefaults.strategy;
+  const strategy = normalizeRecognitionStrategy(input.strategy, recognitionDefaults.strategy);
   return {
     strategy,
     approvalMode: normalizeApprovalMode(input.approvalMode),
@@ -698,5 +702,12 @@ function clampInt(value: unknown, min: number, max: number, fallback: number) {
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function clampOptionalNumber(value: unknown, min: number, max: number): number | null {
+  if (value == null || String(value).trim() === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
   return Math.min(max, Math.max(min, number));
 }

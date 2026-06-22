@@ -10,7 +10,7 @@ import { importLegacyRecognitionRows } from "../import-v5";
 import { rebuildProductLibrary } from "../products";
 import { confirmRecognitionRows, createRecognitionRow, excludeRecognitionRow, updateRecognitionRow } from "../rows";
 import { resolveProductConflict } from "../conflicts";
-import { buildConsensusFlags, decideRowReview } from "../../recognition/review";
+import { buildConsensusFlags, decideRowReview, shouldRunConsensus } from "../../recognition/review";
 import { resolveProviderPrompts } from "../../recognition/provider";
 import { defaultRecognitionPrompts } from "../../recognition/settings";
 import { auditRowByRules, buildAuditStats, findDuplicateRowIds } from "../../recognition/audit";
@@ -454,6 +454,15 @@ describe("review decisions", () => {
     ];
     assert.deepEqual(buildConsensusFlags(a, b), [true, true, false]);
   });
+
+  it("recognition strategy controls whether consensus is actually run", () => {
+    assert.equal(shouldRunConsensus("fast", "auto", true), false);
+    assert.equal(shouldRunConsensus("manual", "auto", true), false);
+    assert.equal(shouldRunConsensus("balanced", "hybrid", false), false);
+    assert.equal(shouldRunConsensus("balanced", "hybrid", true), true);
+    assert.equal(shouldRunConsensus("consensus", "hybrid", false), true);
+    assert.equal(shouldRunConsensus("consensus", "manual", true), false);
+  });
 });
 
 describe("provider prompts", () => {
@@ -475,6 +484,11 @@ describe("provider prompts", () => {
     assert.deepEqual(resolveProviderPrompts({}, {}), {
       systemPrompt: defaultRecognitionPrompts.systemPrompt,
       userPrompt: defaultRecognitionPrompts.userPrompt,
+    });
+    // worker 在全局提示词仍为内置默认时不传 defaults，让非默认场景 fallback 生效。
+    assert.deepEqual(resolveProviderPrompts({}, undefined, { systemPrompt: "S-SCENE", userPrompt: "U-SCENE" }), {
+      systemPrompt: "S-SCENE",
+      userPrompt: "U-SCENE",
     });
   });
 });

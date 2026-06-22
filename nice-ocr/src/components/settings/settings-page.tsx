@@ -192,7 +192,7 @@ export function SettingsPage() {
                 value={draft.defaults.strategy}
                 onChange={(event) => updateDefaults("strategy", event.target.value as Strategy)}
               >
-                <option value="balanced">balanced：风险触发二次识别</option>
+                <option value="balanced">balanced：有自动通过候选时二次识别</option>
                 <option value="fast">fast：单次识别</option>
                 <option value="consensus">consensus：全量多次识别</option>
                 <option value="manual">manual：人工导入/录入</option>
@@ -407,6 +407,7 @@ export function SettingsPage() {
               <TextField label="Base URL" value={provider.baseUrl} onChange={(value) => updateProvider(index, { baseUrl: value })} />
               <TextField label="API Key" type="password" value={provider.apiKey ?? ""} placeholder={provider.hasApiKey ? "留空则保留当前密钥" : "输入 API Key"} onChange={(value) => updateProvider(index, { apiKey: value })} />
               <NumberField label="优先级" value={provider.priority} onChange={(value) => updateProvider(index, { priority: value })} />
+              <OptionalNumberField label="Temperature" value={provider.temperature} onChange={(value) => updateProvider(index, { temperature: value })} />
               <NumberField label="最大输出 Tokens" value={provider.maxOutputTokens} onChange={(value) => updateProvider(index, { maxOutputTokens: value })} />
             </div>
 
@@ -735,6 +736,44 @@ function NumberField({ label, value, onChange }: { label: string; value: number;
           setFocused(false);
           if (draft.trim() === "" || !Number.isFinite(Number(draft))) {
             setDraft(String(value));
+          }
+        }}
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next);
+          if (next.trim() === "") return;
+          const parsed = Number(next);
+          if (Number.isFinite(parsed)) onChange(parsed);
+        }}
+      />
+    </label>
+  );
+}
+
+function OptionalNumberField({ label, value, onChange }: { label: string; value: number | null; onChange: (value: number | null) => void }) {
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(value == null ? "" : String(value));
+  }, [focused, value]);
+
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-muted-foreground">{label}</span>
+      <input
+        className="h-9 w-full rounded-md border border-border bg-background px-3"
+        type="number"
+        value={draft}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          if (draft.trim() === "") {
+            onChange(null);
+            return;
+          }
+          if (!Number.isFinite(Number(draft))) {
+            setDraft(value == null ? "" : String(value));
           }
         }}
         onChange={(event) => {

@@ -14,9 +14,12 @@ import {
 } from "@/lib/recognition/provider";
 import {
   buildRecognitionPrompt,
+  defaultRecognitionPrompts,
   getRecognitionDefaults,
+  normalizeRecognitionStrategy,
   resolveAuditRecognitionTarget,
   resolveRecognitionProviders,
+  type RecognitionDefaults,
 } from "@/lib/recognition/settings";
 import { getScenario, getScenarioFields } from "@/lib/fields/field-schema";
 import { claimNextJob } from "@/lib/queue/jobs";
@@ -25,7 +28,7 @@ import {
   buildConsensusFlags,
   decideRowReview,
   normalizeApprovalMode,
-  requiresConsensus,
+  shouldRunConsensus,
 } from "@/lib/recognition/review";
 import {
   auditRowByRules,
@@ -94,27 +97,41 @@ function scenarioContext(job: ClaimedJob) {
   };
 }
 
+function resolveContextPrompts(
+  config: Parameters<typeof resolveProviderPrompts>[0],
+  defaults: RecognitionDefaults,
+  fallback: Parameters<typeof resolveProviderPrompts>[2],
+) {
+  const defaultPromptsUnchanged =
+    defaults.systemPrompt === defaultRecognitionPrompts.systemPrompt &&
+    defaults.userPrompt === defaultRecognitionPrompts.userPrompt;
+  return resolveProviderPrompts(config, defaultPromptsUnchanged ? undefined : defaults, fallback);
+}
+
 async function extractDocument(job: ClaimedJob) {
   const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
-  const mode = normalizeApprovalMode(job.batch.approvalMode);
   const { extraction, promptFallback, hasExtra } = scenarioContext(job);
 
   // 双模型交叉验证：pass1 主模型、pass2 副模型（提示词按 provider 覆盖→全局→场景生成）。
   const { primary, secondary, defaults } = await resolveRecognitionProviders(job.batch);
-  const primaryProvider = createRecognitionProvider(primary, resolveProviderPrompts(primary.provider, defaults, promptFallback), extraction);
+  const strategy = normalizeRecognitionStrategy(job.batch.strategy, defaults.strategy);
+  const mode = strategy === "manual" ? "manual" : normalizeApprovalMode(job.batch.approvalMode);
+  const prompts = resolveContextPrompts(primary.provider, defaults, promptFallback);
+  const primaryProvider = createRecognitionProvider(primary, prompts, extraction);
 
   // 第一次识别（canonical 结果，主模型）。
-  const first = await recognizePass(primaryProvider, job, imageBase64, 1);
+  const first = await recognizePass(primaryProvider, job, imageBase64, 1, strategy);
   const canonicalRows = first.result.extraction.rows;
 
-  // hybrid / auto 需要第二次识别做一致性比对（副模型，缺省时退化为主模型）。
+  // strategy 决定是否跑第二次识别；审批模式决定一致后能否自动通过。
   let consensusFlags = canonicalRows.map(() => false);
-  if (requiresConsensus(mode)) {
+  const hasAutoCandidate = mode === "auto" || canonicalRows.some((row) => validateRow(row).riskLevel === "low");
+  if (shouldRunConsensus(strategy, mode, hasAutoCandidate)) {
     const secondaryProvider =
       secondary.provider.id === primary.provider.id && secondary.model.id === primary.model.id
         ? primaryProvider
-        : createRecognitionProvider(secondary, resolveProviderPrompts(secondary.provider, defaults, promptFallback), extraction);
-    const second = await recognizePass(secondaryProvider, job, imageBase64, 2);
+        : createRecognitionProvider(secondary, resolveContextPrompts(secondary.provider, defaults, promptFallback), extraction);
+    const second = await recognizePass(secondaryProvider, job, imageBase64, 2, strategy);
     consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows, defaults.amountTolerance);
   }
 
@@ -230,7 +247,7 @@ async function auditDocument(job: ClaimedJob) {
       const auditProvider = await resolveAuditProvider(primary, secondary, defaults.auditProviderKey, defaults.auditModelId);
       const imageBase64 = (await readFile(job.document.storedPath)).toString("base64");
       const pass = await recognizePass(
-        createRecognitionProvider(auditProvider, resolveProviderPrompts(auditProvider.provider, defaults, promptFallback), extraction),
+        createRecognitionProvider(auditProvider, resolveContextPrompts(auditProvider.provider, defaults, promptFallback), extraction),
         job,
         imageBase64,
         3,

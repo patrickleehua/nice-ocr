@@ -26,7 +26,7 @@ interface ApiBatch {
 }
 
 interface SettingsForBatchCreate {
-  defaults: { approvalMode: string };
+  defaults: { approvalMode: string; strategy: string };
   providers: BatchModelOptionProvider[];
 }
 
@@ -218,6 +218,7 @@ export function BatchesPage() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultApprovalMode={settings?.defaults.approvalMode ?? "hybrid"}
+        defaultStrategy={settings?.defaults.strategy ?? "balanced"}
         providers={settings?.providers ?? []}
         onSubmit={(payload) => createBatch.mutate(payload)}
       />

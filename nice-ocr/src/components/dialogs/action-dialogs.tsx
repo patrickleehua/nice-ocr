@@ -73,12 +73,14 @@ export function CreateBatchDrawer({
   onClose,
   onSubmit,
   defaultApprovalMode = "hybrid",
+  defaultStrategy = "balanced",
   providers = [],
 }: {
   open: boolean;
   onClose: () => void;
   onSubmit: (payload: CreateBatchPayload) => void;
   defaultApprovalMode?: string;
+  defaultStrategy?: string;
   providers?: BatchModelOptionProvider[];
 }) {
   const { data: templateData } = useQuery<{ templates: ExportTemplateInfo[] }>({
@@ -97,7 +99,7 @@ export function CreateBatchDrawer({
           const form = new FormData(event.currentTarget);
           onSubmit({
             name: String(form.get("name") ?? ""),
-            strategy: String(form.get("strategy") ?? "balanced"),
+            strategy: String(form.get("strategy") ?? defaultStrategy),
             notes: String(form.get("notes") ?? ""),
             approvalMode: String(form.get("approvalMode") ?? "hybrid"),
             ...parseProviderModelSelection(String(form.get("primaryTarget") ?? "")),
@@ -120,8 +122,8 @@ export function CreateBatchDrawer({
         </label>
         <label className="block text-sm">
           <span className="mb-1 block text-muted-foreground">识别策略</span>
-          <select name="strategy" className="h-9 w-full rounded-md border border-border bg-surface px-3">
-            <option value="balanced">balanced：风险触发二次识别</option>
+          <select name="strategy" defaultValue={defaultStrategy} className="h-9 w-full rounded-md border border-border bg-surface px-3">
+            <option value="balanced">balanced：有自动通过候选时二次识别</option>
             <option value="fast">fast：单次识别</option>
             <option value="consensus">consensus：全量多次识别</option>
             <option value="manual">manual：人工导入</option>
