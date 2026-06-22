@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronRight, Plus, UploadCloud } from "lucide-react";
+import { ChevronRight, Plus, Trash2, UploadCloud } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { ApprovalModeBadge, BatchStatusBadge } from "@/components/ui/status";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
@@ -36,6 +37,7 @@ export function BatchesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ApiBatch | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -73,6 +75,15 @@ export function BatchesPage() {
       return apiUpload(apiPaths.batchUpload(batchId), formData);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["batches"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+
+  const deleteBatch = useMutation({
+    mutationFn: (batchId: string) => apiJson(apiPaths.batch(batchId), { method: "DELETE" }),
+    onSuccess: () => {
+      setDeleteTarget(null);
       queryClient.invalidateQueries({ queryKey: ["batches"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
@@ -198,6 +209,18 @@ export function BatchesPage() {
                       >
                         <UploadCloud size={14} />上传
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDeleteTarget(batch);
+                        }}
+                        title="删除批次（含文档与识别结果）"
+                        className="text-danger hover:text-danger"
+                      >
+                        <Trash2 size={14} />
+                      </Button>
                       <ChevronRight size={16} className="text-muted-foreground" aria-hidden />
                     </div>
                   </td>
@@ -222,6 +245,40 @@ export function BatchesPage() {
         providers={settings?.providers ?? []}
         onSubmit={(payload) => createBatch.mutate(payload)}
       />
+      <Dialog
+        open={!!deleteTarget}
+        onClose={() => !deleteBatch.isPending && setDeleteTarget(null)}
+        title="删除批次"
+        description="此操作不可撤销"
+        className="max-w-md"
+        footer={
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setDeleteTarget(null)} disabled={deleteBatch.isPending}>
+              取消
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => deleteTarget && deleteBatch.mutate(deleteTarget.id)}
+              disabled={deleteBatch.isPending}
+            >
+              <Trash2 size={14} />
+              {deleteBatch.isPending ? "删除中..." : "确认删除"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-foreground">
+          确认删除批次「<span className="font-medium">{deleteTarget?.name}</span>」？
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          将一并删除该批次下的 {formatNumber(deleteTarget?._count?.documents ?? 0)} 个文档、
+          {formatNumber(deleteTarget?._count?.rows ?? 0)} 行识别结果及对应原图文件，且无法恢复。
+        </p>
+        {deleteBatch.isError ? (
+          <p className="mt-3 text-xs text-danger">{(deleteBatch.error as Error)?.message ?? "删除失败"}</p>
+        ) : null}
+      </Dialog>
     </div>
   );
 }
