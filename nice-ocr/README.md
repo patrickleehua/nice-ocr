@@ -112,6 +112,34 @@ macOS：
 ./start-mac.command --skip-install --skip-ocr
 ```
 
+## Docker 部署
+
+`nice-ocr/Dockerfile` 会把 Web、worker、OCR layout 三个服务打包进同一个镜像，容器入口脚本会先同步 SQLite schema，然后启动三个进程。SQLite 数据库和本地文件存储挂载到 `/data`。
+
+```bash
+cd nice-ocr
+docker compose up --build
+```
+
+打开 `http://localhost:3000`。
+
+`docker-compose.yml` 默认使用 `linux/amd64`，主要是为了让 PaddlePaddle/PaddleOCR 在 Windows 和 Apple Silicon macOS 上也走更稳定的镜像架构。
+
+常用环境变量：
+
+- `DATABASE_URL`：默认 `file:/data/nice-ocr.db`。
+- `STORAGE_DIR`：默认 `/data/storage`。
+- `PROVIDER_KEY_ENCRYPTION_KEY`：保存 Provider API Key 前建议设置，生成方式：`openssl rand -base64 32`。
+- `ENABLE_OCR_LAYOUT`：默认 `1`，设为 `0` 可不启动 PaddleOCR layout 服务。
+- `OCR_LAYOUT_URL`：默认 `http://127.0.0.1:8077`，worker 在同容器内调用本地 OCR layout 服务。
+
+如果只想构建镜像：
+
+```bash
+cd nice-ocr
+docker build -t nice-ocr:local .
+```
+
 首次使用前进入 `/settings` 配置 AI Provider。Provider 的 Base URL、API Key、协议、启用状态、模型目录和提示词都存入数据库，不依赖 `.env`。
 
 ## 常用命令
