@@ -6,8 +6,8 @@ import { clampViewerZoom, regionStyle, viewportForRegion, type ImageRegionBox } 
 import { cn } from "@/lib/utils";
 
 const STEP = 0.25;
-/** 滚轮/触摸板捏合的缩放灵敏度（越小越温和）：按 deltaY 做指数比例缩放，避免捏合骤变。 */
-const WHEEL_SENSITIVITY = 0.0015;
+/** 滚轮/触摸板捏合每档步长：取按钮步长的一半，手感更可控。 */
+const WHEEL_STEP = STEP / 2;
 /** 工具栏快捷缩放倍数。 */
 const QUICK_ZOOMS = [0.5, 1, 2, 4] as const;
 /** 画布内边距（与 inset-4 对应），用于把视口中心换算到缩放坐标系。 */
@@ -97,6 +97,22 @@ export function ImageViewer({
     setZoom(z1);
   }, []);
 
+  // 快捷倍数专用：把图片中心对齐到画布视口中心，避免高倍率时图片跑出可视区「丢失」。
+  const zoomToImageCenter = useCallback((value: number) => {
+    const z1 = clampViewerZoom(value);
+    const canvas = canvasRef.current;
+    const size = imageSizeRef.current;
+    if (canvas && size.width) {
+      const rect = canvas.getBoundingClientRect();
+      // 水平 flex 居中已抵消偏移，pan.x 仅需补偿缩放；垂直方向扣除顶部内边距后让图片中心落在视口中心。
+      setPan({
+        x: (size.width / 2) * (1 - z1),
+        y: rect.height / 2 - CANVAS_INSET - (size.height / 2) * z1,
+      });
+    }
+    setZoom(z1);
+  }, []);
+
   // Ctrl+滚轮 / 触摸板捏合缩放：必须用原生「非 passive」监听，React 合成 onWheel 是 passive，
   // preventDefault 无效会导致整页一起缩放。这里只缩放画布内图片，并阻止浏览器默认页面缩放。
   useEffect(() => {
@@ -105,8 +121,8 @@ export function ImageViewer({
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      // 指数比例缩放：按 deltaY 大小温和变化，触摸板捏合不再骤变，且围绕视口中心。
-      zoomTo(zoomRef.current * Math.exp(-event.deltaY * WHEEL_SENSITIVITY));
+      // 按方向定步长缩放（按钮步长的一半），围绕视口中心，触摸板捏合不再骤变。
+      zoomTo(zoomRef.current - Math.sign(event.deltaY) * WHEEL_STEP);
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -193,7 +209,7 @@ export function ImageViewer({
             <button
               key={value}
               type="button"
-              onClick={() => zoomTo(value)}
+              onClick={() => zoomToImageCenter(value)}
               className={cn(
                 "rounded px-1.5 py-0.5 text-[11px] tabular-nums transition-colors",
                 Math.abs(zoom - value) < 0.01
