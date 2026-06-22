@@ -15,17 +15,19 @@ export interface SourceRegion {
   confidence?: number;
 }
 
-const sourceRegionObjectSchema = z
-  .object({
-    x: z.union([z.number(), z.string()]).optional(),
-    y: z.union([z.number(), z.string()]).optional(),
-    w: z.union([z.number(), z.string()]).optional(),
-    h: z.union([z.number(), z.string()]).optional(),
-    confidence: z.union([z.number(), z.string()]).optional(),
-  })
-  .passthrough();
+// OpenAI 结构化输出（strict）要求所有字段必填：可选字段须同时 `.nullable()`，否则
+// `zodTextFormat` 报错 "uses .optional() without .nullable()"。这里统一用 `.nullish()`
+// （= optional + nullable）兼顾「模型可省略/置空」与「parse 容错旧数据」。
+// 不用 `.passthrough()`：strict 模式禁止 additionalProperties，多余键由模型按 schema 省略。
+const sourceRegionObjectSchema = z.object({
+  x: z.union([z.number(), z.string()]).nullish(),
+  y: z.union([z.number(), z.string()]).nullish(),
+  w: z.union([z.number(), z.string()]).nullish(),
+  h: z.union([z.number(), z.string()]).nullish(),
+  confidence: z.union([z.number(), z.string()]).nullish(),
+});
 
-export const sourceRegionInputSchema = sourceRegionObjectSchema.optional().catch(undefined);
+export const sourceRegionInputSchema = sourceRegionObjectSchema.nullish().catch(undefined);
 
 export function normalizeSourceRegion(raw: unknown): SourceRegion | undefined {
   const parsed = sourceRegionObjectSchema.safeParse(raw);
