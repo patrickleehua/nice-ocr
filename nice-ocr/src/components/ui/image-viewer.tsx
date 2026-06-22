@@ -49,6 +49,8 @@ export function ImageViewer({
   const canvasRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  // 最近一次鼠标在画布内的位置，作为按钮/快捷倍数缩放的锚点（点击时鼠标已不在图上）。
+  const anchorRef = useRef<{ x: number; y: number } | null>(null);
   // 镜像最新 zoom/pan/imageSize，供原生 wheel 监听与稳定的 zoomTo 在事件回调中读取（无需重绑事件）。
   // 在 effect 中同步而非 render 期写入，事件总在提交后触发，读到的即最新值。
   const zoomRef = useRef(zoom);
@@ -77,9 +79,9 @@ export function ImageViewer({
     setImageSize({ width: img.clientWidth, height: img.clientHeight });
   }, []);
 
-  // 统一缩放入口：以画布视口中心为锚点缩放（同步调整 pan，使中心点内容不动），
-  // 而非默认的左上角缩放。供按钮、快捷倍数与滚轮共用。
-  const zoomTo = useCallback((next: number) => {
+  // 统一缩放入口：以鼠标焦点为锚点缩放（同步调整 pan，使锚点下的内容不动）。
+  // anchor 为画布内坐标；缺省时退回视口中心。供按钮、快捷倍数与滚轮共用。
+  const zoomTo = useCallback((next: number, anchor?: { x: number; y: number } | null) => {
     const z0 = zoomRef.current;
     const z1 = clampViewerZoom(next);
     if (z1 === z0) return;
@@ -88,27 +90,14 @@ export function ImageViewer({
     if (canvas && size.width) {
       const rect = canvas.getBoundingClientRect();
       const ratio = z1 / z0;
-      // 视口中心换算到缩放坐标系：水平方向 flex 居中已抵消偏移（取图片中心），垂直方向扣除顶部内边距。
-      const anchorX = size.width / 2;
-      const anchorY = rect.height / 2 - CANVAS_INSET;
+      // 锚点（画布内坐标）：传入则围绕鼠标焦点缩放，缺省退回视口中心。
+      const sx = anchor ? anchor.x : rect.width / 2;
+      const sy = anchor ? anchor.y : rect.height / 2;
+      // 换算到缩放坐标系：水平 flex 居中偏移为 (rect.width-size.width)/2，垂直顶部内边距为 CANVAS_INSET。
+      const qx = sx - rect.width / 2 + size.width / 2;
+      const qy = sy - CANVAS_INSET;
       const p0 = panRef.current;
-      setPan({ x: anchorX - ratio * (anchorX - p0.x), y: anchorY - ratio * (anchorY - p0.y) });
-    }
-    setZoom(z1);
-  }, []);
-
-  // 快捷倍数专用：把图片中心对齐到画布视口中心，避免高倍率时图片跑出可视区「丢失」。
-  const zoomToImageCenter = useCallback((value: number) => {
-    const z1 = clampViewerZoom(value);
-    const canvas = canvasRef.current;
-    const size = imageSizeRef.current;
-    if (canvas && size.width) {
-      const rect = canvas.getBoundingClientRect();
-      // 水平 flex 居中已抵消偏移，pan.x 仅需补偿缩放；垂直方向扣除顶部内边距后让图片中心落在视口中心。
-      setPan({
-        x: (size.width / 2) * (1 - z1),
-        y: rect.height / 2 - CANVAS_INSET - (size.height / 2) * z1,
-      });
+      setPan({ x: qx - ratio * (qx - p0.x), y: qy - ratio * (qy - p0.y) });
     }
     setZoom(z1);
   }, []);
@@ -121,8 +110,12 @@ export function ImageViewer({
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey) return;
       event.preventDefault();
-      // 按方向定步长缩放（按钮步长的一半），围绕视口中心，触摸板捏合不再骤变。
-      zoomTo(zoomRef.current - Math.sign(event.deltaY) * WHEEL_STEP);
+      // 按方向定步长缩放（按钮步长的一半），以鼠标焦点为锚点，触摸板捏合不再骤变。
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const anchor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      anchorRef.current = anchor;
+      zoomTo(zoomRef.current - Math.sign(event.deltaY) * WHEEL_STEP, anchor);
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -159,6 +152,11 @@ export function ImageViewer({
   }
 
   function onPointerMove(event: React.PointerEvent) {
+    const el = canvasRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      anchorRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
     if (!drag.current) return;
     setPan({
       x: drag.current.panX + event.clientX - drag.current.x,
@@ -179,7 +177,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="放大"
-          onClick={() => zoomTo(zoomRef.current + STEP)}
+          onClick={() => zoomTo(zoomRef.current + STEP, anchorRef.current)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomIn size={15} />
@@ -187,7 +185,7 @@ export function ImageViewer({
         <button
           type="button"
           aria-label="缩小"
-          onClick={() => zoomTo(zoomRef.current - STEP)}
+          onClick={() => zoomTo(zoomRef.current - STEP, anchorRef.current)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <ZoomOut size={15} />
@@ -209,7 +207,7 @@ export function ImageViewer({
             <button
               key={value}
               type="button"
-              onClick={() => zoomToImageCenter(value)}
+              onClick={() => zoomTo(value, anchorRef.current)}
               className={cn(
                 "rounded px-1.5 py-0.5 text-[11px] tabular-nums transition-colors",
                 Math.abs(zoom - value) < 0.01
