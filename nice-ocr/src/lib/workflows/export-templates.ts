@@ -344,6 +344,10 @@ function styleHeaderCell(cell: ExcelJS.Cell) {
   cell.alignment = { ...HEADER_ALIGN };
 }
 
+function sheetHyperlink(sheetName: string) {
+  return `#'${sheetName.replace(/'/g, "''")}'!A1`;
+}
+
 /** 写「目录」索引页：序号/产品名 成对，列优先纵向填充，每栏满 tocRowsPerColumn 后向右新增一栏。 */
 function writeTocSheet(workbook: ExcelJS.Workbook, cfg: PivotTemplateConfig, products: PivotProduct[]) {
   const sheet = workbook.addWorksheet(cfg.tocSheetName);
@@ -362,7 +366,9 @@ function writeTocSheet(workbook: ExcelJS.Workbook, cfg: PivotTemplateConfig, pro
     const r = i % rowsPerColumn;
     const row = sheet.getRow(r + 2);
     row.getCell(g * 2 + 1).value = product.index;
-    row.getCell(g * 2 + 2).value = product.key;
+    const nameCell = row.getCell(g * 2 + 2);
+    nameCell.value = { text: product.key, hyperlink: sheetHyperlink(product.sheetName) };
+    nameCell.font = { color: { argb: "FF0563C1" }, underline: true };
   });
 
   for (let g = 0; g < columnGroups; g++) {

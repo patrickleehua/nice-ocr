@@ -138,9 +138,9 @@ describe("pivot 模板（采购统计表透视）", () => {
     assert.equal(toc.getCell("A1").value, "序号");
     assert.equal(toc.getCell("B1").value, "产品名");
     assert.equal(toc.getCell("A2").value, 1);
-    assert.equal(toc.getCell("B2").value, "100001土豆");
+    assert.deepEqual(toc.getCell("B2").value, { text: "100001土豆", hyperlink: "#'100001土豆'!A1" });
     assert.equal(toc.getCell("A3").value, 2);
-    assert.equal(toc.getCell("B3").value, "100005白萝卜");
+    assert.deepEqual(toc.getCell("B3").value, { text: "100005白萝卜", hyperlink: "#'100005白萝卜'!A1" });
   });
 
   it("单产品 sheet：合并标题 + 月份列降序 + 数量落格 + 评估列计算", async () => {
