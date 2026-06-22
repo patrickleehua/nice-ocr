@@ -1,7 +1,7 @@
 "use client";
 
 import { ImageOff, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const MIN_ZOOM = 0.25;
@@ -39,6 +39,20 @@ export function ImageViewer({
   }
 
   const canPan = Boolean(src && !error);
+
+  // Ctrl+滚轮 / 触摸板捏合缩放：必须用原生「非 passive」监听，React 合成 onWheel 是 passive，
+  // preventDefault 无效会导致整页一起缩放。这里只缩放画布内图片，并阻止浏览器默认页面缩放。
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      setZoom((z) => clampZoom(z - Math.sign(event.deltaY) * STEP));
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   function onPointerDown(event: React.PointerEvent) {
     const el = canvasRef.current;
@@ -107,11 +121,6 @@ export function ImageViewer({
         onPointerMove={onPointerMove}
         onPointerUp={endPan}
         onPointerCancel={endPan}
-        onWheel={(event) => {
-          if (!event.ctrlKey) return;
-          event.preventDefault();
-          setZoom((z) => clampZoom(z - Math.sign(event.deltaY) * STEP));
-        }}
       >
         {src && !error ? (
           <div

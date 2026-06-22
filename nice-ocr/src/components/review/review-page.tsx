@@ -3,7 +3,7 @@
 import { Boxes, Check, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, Search, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Panel, PanelHeader, PanelTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { FieldCell } from "@/components/ui/field-cell";
 import { ImageViewer } from "@/components/ui/image-viewer";
 import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
+import { useSidebar } from "@/components/app-shell/sidebar-context";
 import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
 import { DEFAULT_SCENARIO_ID, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
@@ -123,6 +124,7 @@ export function ReviewPage() {
   const [docFilter, setDocFilter] = useState<ReviewState | "all">("all");
   const [docPage, setDocPage] = useState(1);
   const [focus, setFocus] = useState(false);
+  const { setCollapsed } = useSidebar();
   // 行内删除二次确认：记录待删除行 id。
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // 新增草稿行：undefined=无草稿；null=末尾追加；string=在该行下方插入。
@@ -271,6 +273,17 @@ export function ReviewPage() {
     const next = filteredDocs[selectedIndex + offset];
     if (next) selectDoc(next.id);
   }
+
+  // 专注模式联动侧边栏：进入折叠、退出展开，给原图与明细让出横向空间。
+  // 跳过首次挂载，避免覆盖用户在普通模式的折叠偏好；仅在用户切换专注态时联动。
+  const focusInitRef = useRef(true);
+  useEffect(() => {
+    if (focusInitRef.current) {
+      focusInitRef.current = false;
+      return;
+    }
+    setCollapsed(focus);
+  }, [focus, setCollapsed]);
 
   // 专注模式键盘导航：←/→ 切换单据，Esc 退出（在输入框/下拉里只处理 Esc，不拦截编辑）。
   useEffect(() => {
@@ -438,7 +451,9 @@ export function ReviewPage() {
         className={cn(
           "grid gap-4",
           focus
-            ? "min-h-[calc(100vh-9rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"
+            ? // 专注模式固定视口高度（非 min-h），使两列等高、明细内部滚动、原图垂直居中；
+              // 否则表格内容会撑开行高，导致 flex-1+overflow 失效（明细过长、原图被推到底部）。
+              "h-[calc(100vh-9.5rem)] min-h-0 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"
             : "min-h-[640px] xl:grid-cols-[230px_minmax(0,1fr)_minmax(0,1.3fr)]",
         )}
       >

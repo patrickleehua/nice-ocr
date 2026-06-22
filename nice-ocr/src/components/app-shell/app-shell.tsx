@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { apiGet } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
+import { SidebarProvider } from "./sidebar-context";
 
 const navGroups = [
   {
@@ -83,6 +84,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .find((item) => (item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)));
 
   return (
+    <SidebarProvider value={{ collapsed, setCollapsed }}>
     <div className="flex h-screen overflow-hidden bg-app text-foreground">
       <aside
         className={cn(
@@ -180,5 +182,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4">{children}</main>
       </div>
     </div>
+    </SidebarProvider>
   );
 }
