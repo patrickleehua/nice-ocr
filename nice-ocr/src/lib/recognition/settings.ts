@@ -247,6 +247,19 @@ export async function upsertAiProviderConfig(input: AiProviderConfigInput) {
   );
 }
 
+export async function deleteAiProviderConfig(providerId: string) {
+  const provider = await prisma.aiProviderConfig.findUnique({ where: { id: providerId } });
+  if (!provider) {
+    throw new Error("Provider not found");
+  }
+  // 模型对 provider 是 onDelete: Restrict，需在同一事务里先删模型再删 provider。
+  await prisma.$transaction([
+    prisma.aiProviderModel.deleteMany({ where: { providerId } }),
+    prisma.aiProviderConfig.delete({ where: { id: providerId } }),
+  ]);
+  return { id: providerId, providerKey: provider.providerKey };
+}
+
 export async function getActiveRecognitionTarget() {
   const targets = await getEnabledRecognitionTargets();
   const target = targets[0];
