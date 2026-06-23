@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { tableCellClass } from "@/components/ui/table";
 
@@ -17,14 +17,30 @@ export function FieldCell({
   type = "text",
   align = "left",
   disabled = false,
+  widthClass = "min-w-16",
+  width,
+  listId,
+  options,
   onCommit,
 }: {
   value: string | number | null | undefined;
   type?: "text" | "number";
   align?: "left" | "right";
   disabled?: boolean;
+  /** 输入框/单元格最小宽度类；商品名等长文本列传入更宽的值，避免名称被截断。 */
+  widthClass?: string;
+  /** 用户拖拽设定的列宽（px）；设置后以内联样式覆盖 widthClass（item 2 列宽可调）。 */
+  width?: number;
+  /** 关联的 <datalist> id，启用输入词语联想（item 1，仅文本字段）。 */
+  listId?: string;
+  /** 本单元格专属联想候选（优先于 listId）：用于「按产品名联想单位」这类按行变化的候选。 */
+  options?: string[];
   onCommit: (next: string) => void;
 }) {
+  const widthStyle = width ? { width, minWidth: width, maxWidth: width } : undefined;
+  const ownListId = useId();
+  const hasOptions = Boolean(options && options.length);
+  const effectiveListId = hasOptions ? ownListId : listId;
   const raw = value == null ? "" : String(value);
   const [draft, setDraft] = useState(raw);
   const focused = useRef(false);
@@ -41,15 +57,28 @@ export function FieldCell({
 
   if (disabled) {
     return (
-      <td className={cn(tableCellClass, align === "right" && "text-right")}>{raw === "" ? "-" : raw}</td>
+      <td
+        className={cn(tableCellClass, width ? undefined : widthClass, align === "right" && "text-right")}
+        style={widthStyle}
+      >
+        {raw === "" ? "-" : raw}
+      </td>
     );
   }
 
   return (
-    <td className={cn(tableCellClass, "p-1")}>
+    <td className={cn(tableCellClass, "p-1")} style={widthStyle}>
+      {hasOptions ? (
+        <datalist id={ownListId}>
+          {options!.map((option) => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      ) : null}
       <input
         type={type}
         step={type === "number" ? "any" : undefined}
+        list={effectiveListId}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onFocus={() => {
@@ -72,7 +101,8 @@ export function FieldCell({
         }}
         title="点击编辑"
         className={cn(
-          "h-7 w-full min-w-16 rounded border border-transparent bg-transparent px-2 text-xs outline-none transition-colors",
+          "h-7 w-full rounded border border-transparent bg-transparent px-2 text-xs outline-none transition-colors",
+          widthClass,
           "hover:border-border focus:border-primary focus:bg-background",
           align === "right" && "text-right",
         )}

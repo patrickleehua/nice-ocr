@@ -36,11 +36,13 @@ export function shouldRunConsensus(
  * 决定一行的最终状态与标识类别。
  * 规则：高风险（疑似非商品名等）任何模式都不自动通过；
  * manual 全部转人工；hybrid 需「双次一致 + 低风险」；auto 仅需「双次一致」（低/中风险均可）。
+ * blockAuto（如数量为 0）为一票否决：任何模式都不允许自动通过，强制转人工。
  */
 export function decideRowReview(
   mode: ApprovalMode,
   riskLevel: RiskLevel | string,
   consensusAgreed: boolean,
+  blockAuto = false,
 ): ReviewDecision {
   if (riskLevel === "high") {
     return { status: "conflict", reviewClass: "conflict" };
@@ -48,14 +50,9 @@ export function decideRowReview(
   if (mode === "manual") {
     return { status: riskLevel === "low" ? "pending" : "needs_review", reviewClass: "pending_review" };
   }
-  if (mode === "hybrid") {
-    if (riskLevel === "low" && consensusAgreed) {
-      return { status: "confirmed", reviewClass: "ai_auto" };
-    }
-    return { status: "needs_review", reviewClass: "pending_review" };
-  }
-  // auto：双次一致即自动通过。
-  if (consensusAgreed) {
+  // hybrid 需「低风险 + 双次一致」；auto 仅需「双次一致」（低/中风险均可）。
+  const wouldAutoConfirm = mode === "hybrid" ? riskLevel === "low" && consensusAgreed : consensusAgreed;
+  if (wouldAutoConfirm && !blockAuto) {
     return { status: "confirmed", reviewClass: "ai_auto" };
   }
   return { status: "needs_review", reviewClass: "pending_review" };

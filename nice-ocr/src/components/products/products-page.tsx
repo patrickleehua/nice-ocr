@@ -1,15 +1,23 @@
 "use client";
 
-import { Download, RefreshCw } from "lucide-react";
+import { Download, RefreshCw, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, tableCellClass, tableHeadClass, TableWrap } from "@/components/ui/table";
 import { Pagination } from "@/components/ui/pagination";
-import { apiDownload, apiGet, apiJson } from "@/lib/api/client";
+import { apiDownload, apiGet, apiJson, apiUpload } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import { formatDateTime } from "@/lib/utils";
+
+interface ImportHistoryResult {
+  products: number;
+  historyRecords: number;
+  productsCreated: number;
+  productsUpdated: number;
+  withCode: number;
+}
 
 interface ApiProduct {
   id: string;
@@ -52,14 +60,59 @@ export function ProductsPage() {
   });
   const exportProducts = useMutation({ mutationFn: () => apiDownload(apiPaths.exportsProducts) });
 
+  // 历史记录导入：上传采购统计表，写入产品库 + #3 历史校验基线。
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importHistory = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return apiUpload<ImportHistoryResult>(apiPaths.importHistory, formData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+  const importError = (importHistory.error as Error)?.message ?? null;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">产品库</h1>
           <p className="mt-1 text-sm text-muted-foreground">从识别明细沉淀产品资料，并维护编码、名称、单位冲突。</p>
+          {importHistory.isPending ? (
+            <p className="mt-1 text-xs text-info-strong">正在导入历史记录，请稍候（大文件可能需要数十秒）…</p>
+          ) : importHistory.data ? (
+            <p className="mt-1 text-xs text-success-strong">
+              导入完成：解析 {importHistory.data.products} 个产品，新增 {importHistory.data.productsCreated}、更新{" "}
+              {importHistory.data.productsUpdated}，写入历史基线 {importHistory.data.historyRecords} 条。
+            </p>
+          ) : importError ? (
+            <p className="mt-1 text-xs text-danger">导入失败：{importError}</p>
+          ) : null}
         </div>
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) importHistory.mutate(file);
+              event.target.value = "";
+            }}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importHistory.isPending}
+            title="导入采购统计表（.xlsx）：写入产品库并作为单位历史校验基线"
+          >
+            <Upload size={15} className={importHistory.isPending ? "animate-pulse" : undefined} />导入历史
+          </Button>
           <Button size="sm" variant="secondary" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
             <RefreshCw size={15} className={rebuild.isPending ? "animate-spin" : undefined} />重建产品库
           </Button>

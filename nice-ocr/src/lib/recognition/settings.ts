@@ -24,10 +24,28 @@ export type SourceRegionMode = (typeof sourceRegionModes)[number];
 export const sourceRegionPromptInstruction =
   "尽量为每个明细行返回 sourceRegion：该行在整张图片中的归一化位置，x/y/w/h 都是 0..1；无法判断时可省略，不要编造。";
 
+/**
+ * 「禁止公式计算」强制指令：要求模型逐字转录单据上印刷/手写的数字，
+ * 不得用「数量×单价」等公式自行计算、推算或修正金额与单价。
+ * 与 sourceRegionPromptInstruction 一样在 createRecognitionProvider 处幂等强制注入，
+ * 避免用户已保存的自定义提示词不含该约束、导致模型重新自行计算金额而掩盖识别错误。
+ */
+export const noComputePromptInstruction =
+  "金额、单价、数量等所有数字必须严格按单据上实际印刷或手写的内容逐字录入；严禁用「数量×单价」等公式自行计算、推算或修正金额与单价。若某个数字看不清或缺失，请如实留空或填 0，交由人工核对，切勿猜测或用公式补齐。";
+
+/**
+ * 逐行对齐指令：针对「识别错行」——模型把多行并成一行、一行拆成多行、或数值串到相邻列。
+ * 与 noCompute 一样作为强制注入项（见 provider.ensureRowAlignmentInstruction），以稳定子串
+ * 「逐行转录表格」做幂等判断。
+ */
+export const rowAlignmentInstruction =
+  "逐行转录表格：单据上每一条印刷或手写的明细行，对应输出且仅输出一行，禁止把多条明细合并成一行、也禁止把一条明细拆成多行；严格保持单据自上而下的原始行顺序。每个数值必须对齐到它所属的列（编码、名称、单位、数量、单价、金额不得错位或串列）；某个单元格为空或看不清时，该字段留空或填 0，绝不要用相邻行或相邻列的值顶替。";
+
 /** 内置默认提示词；provider 未覆盖、全局也未设置时回退到此。 */
 export const defaultRecognitionPrompts = {
   systemPrompt:
     "识别图片中的副食品销售单或采购单表格。提取单据日期和明细行。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。" +
+    noComputePromptInstruction +
     sourceRegionPromptInstruction,
   userPrompt: "请抽取这张单据图片中的日期和所有表格明细行。",
 } as const;
@@ -47,7 +65,7 @@ export function buildRecognitionPrompt(
     .map((field) => (field.recognitionHint ? `${field.label}（${field.recognitionHint}）` : field.label))
     .join("、");
   return {
-    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。${sourceRegionPromptInstruction}`,
+    systemPrompt: `识别图片中的「${scenario.name}」表格。提取单据日期和明细行；每行包含字段：${fieldList}。不要输出解释，只按结构化 schema 返回 date 和 items；无法识别的字段用空字符串或 0。${noComputePromptInstruction}${sourceRegionPromptInstruction}`,
     userPrompt: `请抽取这张「${scenario.name}」图片中的日期和所有表格明细行。`,
   };
 }

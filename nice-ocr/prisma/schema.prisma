@@ -56,6 +56,10 @@ model Document {
   pageCount       Int?
   riskLevel       String              @default("low")
   riskReasonsJson String              @default("[]")
+  // 人工处理计时：首次在审核台打开记 reviewStartedAt；全部行确认收口记 reviewCompletedAt。
+  // 两者皆有时差即该单的人工处理时长，用于看板统计单均/总处理时长。历史数据为 null=不计入。
+  reviewStartedAt   DateTime?
+  reviewCompletedAt DateTime?
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   jobs            RecognitionJob[]
@@ -186,6 +190,8 @@ model Product {
   code        String?
   name        String
   unit        String?
+  // 该产品的代表单价：取历史成交（已确认行 + 导入历史）单价的中位数，用于联想/校验参考。null=暂无价样本。
+  price       Float?
   aliasesJson String            @default("[]")
   status      String            @default("active")
   remark      String?
@@ -194,6 +200,24 @@ model Product {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   conflicts   ProductConflict[]
+
+  @@index([code])
+  @@index([name])
+}
+
+/**
+ * 导入的历史成交记录：为识别阶段的「历史单价/单位多重校验」提供基线（含单价，Product/ProductObservation 不存价）。
+ * 与系统已确认行一起聚合成历史统计，校验识别出的单价是否离群、单位是否与历史主导不一致。
+ */
+model ProductPriceHistory {
+  id        String   @id @default(cuid())
+  code      String?
+  name      String
+  unit      String?
+  price     Float    @default(0)
+  /** 来源：import=历史导入；预留其它来源。 */
+  source    String   @default("import")
+  createdAt DateTime @default(now())
 
   @@index([code])
   @@index([name])

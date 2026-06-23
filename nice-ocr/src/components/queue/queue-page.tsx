@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Ban, RefreshCw, RotateCcw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { JobStatusBadge } from "@/components/ui/status";
@@ -72,7 +73,9 @@ const PAGE_SIZE = 20;
 
 export function QueuePage() {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState("");
+  const searchParams = useSearchParams();
+  // 支持从仪表盘等入口带 ?status= 深链进入队列并预置筛选。
+  const [status, setStatus] = useState(searchParams.get("status") ?? "");
   const [type, setType] = useState("");
   const [page, setPage] = useState(1);
 

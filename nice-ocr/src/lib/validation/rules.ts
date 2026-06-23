@@ -46,6 +46,15 @@ export function cleanProductCode(code?: string | null) {
   return value;
 }
 
+/**
+ * 领域命名规则：商品名中「一级精品」前的两个字必为品牌「雨润」，用于纠正该系列的 OCR 误识
+ * （如「雨闰一级精品」「雨 润 一级精品」）。前面不足两字时直接补成「雨润一级精品」。
+ * 只做确定性纠错，不改动其它文字。
+ */
+export function applyBrandRules(name?: string | null): string {
+  return String(name ?? "").replace(/[^\s]{0,2}\s*一级精品/g, "雨润一级精品");
+}
+
 export function isInvalidProductName(name?: string | null) {
   const value = String(name ?? "").trim();
   if (!value) return true;
@@ -63,6 +72,8 @@ export function validateRow(row: Pick<RecognitionRow, "code" | "name" | "qty" | 
 
   const expected = Number(row.qty || 0) * Number(row.price || 0);
   if (Math.abs(expected - Number(row.amount || 0)) > 0.01) reasons.push("AMOUNT_MISMATCH");
+  // 数量为 0（或缺失）多为漏识别/无效行，标记风险以阻止自动通过，交人工核对。
+  if (Number(row.qty || 0) <= 0) reasons.push("ZERO_QTY");
 
   const riskLevel = reasons.some((reason) => reason === "INVALID_PRODUCT_NAME")
     ? "high"

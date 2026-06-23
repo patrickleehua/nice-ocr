@@ -113,6 +113,18 @@ const docFilters: Array<{ key: ReviewState | "all"; label: string }> = [
 
 const DOC_PAGE_SIZE = 8;
 
+// 词语联想 <datalist> 元素 id（item 1）：明细表与新增草稿行的商品名/单位输入共用。
+const SUGGEST_NAMES_ID = "review-suggest-names";
+const SUGGEST_UNITS_ID = "review-suggest-units";
+
+/** 文本字段对应的联想 datalist id（仅可编辑的商品名/单位）。 */
+function fieldListId(field: FieldDef): string | undefined {
+  if (!field.editable) return undefined;
+  if (field.key === "name") return SUGGEST_NAMES_ID;
+  if (field.key === "unit") return SUGGEST_UNITS_ID;
+  return undefined;
+}
+
 function rowSourceRegion(row: ApiRow): ImageRegion["box"] | null {
   if (!row.sourceRegionJson) return null;
   try {
@@ -156,10 +168,20 @@ export function ReviewPage() {
   const [activeRowId, setActiveRowId] = useState<string | null>(null);
   const [targetRowId, setTargetRowId] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  // 每个文档只恢复一次"上次审核到的行"，避免编辑刷新后反复抢滚动（item 4 行级增强）。
+  const restoredDocRef = useRef<string | null>(null);
+  // 每个文档只打一次处理计时起点（task 1）。
+  const reviewStartedDocs = useRef<Set<string>>(new Set());
   // 列显示偏好：被隐藏的字段列 key 集合，持久化到 localStorage。
   const [hiddenFieldKeys, setHiddenFieldKeys] = useState<Set<string>>(new Set());
   // 单行数据定位开关：开=点击/悬停行可在原图定位并高亮，关=纯查看不联动、原图不画框。
   const [locateEnabled, setLocateEnabled] = useState(true);
+  // 列宽（item 2）：字段 key → 用户拖拽设定的像素宽度，持久化到 localStorage。
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  const widthsHydrated = useRef(false);
+  const resizing = useRef<{ key: string; startX: number; startW: number } | null>(null);
+  // 上次审核到的文档（item 4）：按作用域记忆，进入时定位到此而非第一张。
+  const [storedLastId, setStoredLastId] = useState<string | null>(null);
 
   // 挂载后读取持久化偏好（初值取默认，避免 SSR/CSR 水合不一致）。
   useEffect(() => {
@@ -168,11 +190,13 @@ export function ReviewPage() {
       const rawCols = window.localStorage.getItem("review-hidden-cols");
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
       if (rawCols) setHiddenFieldKeys(new Set(JSON.parse(rawCols) as string[]));
+      const rawWidths = window.localStorage.getItem("review-col-widths");
+      if (rawWidths) setColWidths(JSON.parse(rawWidths) as Record<string, number>);
     } catch {
       /* 忽略损坏的本地偏好 */
     }
+    widthsHydrated.current = true;
     if (window.localStorage.getItem("review-locate-enabled") === "0") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
       setLocateEnabled(false);
     }
   }, []);
@@ -194,6 +218,73 @@ export function ReviewPage() {
       return next;
     });
   }
+
+  // 列宽拖拽（item 2）：按下记录起始宽度，移动实时更新，松手结束；通过 pointer capture
+  // 让拖到表头外也持续响应。持久化由下方 effect 跟随 colWidths 写入。
+  function startResize(event: React.PointerEvent, key: string) {
+    const th = event.currentTarget.parentElement as HTMLElement | null;
+    const startW = th?.getBoundingClientRect().width ?? 120;
+    resizing.current = { key, startX: event.clientX, startW };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function moveResize(event: React.PointerEvent) {
+    const state = resizing.current;
+    if (!state) return;
+    const next = Math.max(60, Math.min(640, Math.round(state.startW + (event.clientX - state.startX))));
+    setColWidths((prev) => ({ ...prev, [state.key]: next }));
+  }
+  function endResize(event: React.PointerEvent) {
+    if (!resizing.current) return;
+    resizing.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      /* 指针已释放 */
+    }
+  }
+  // 双击手柄：清除该列的手动宽度，恢复按内容自适应（item 2 增强）。
+  function resetColumn(key: string) {
+    setColWidths((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  const resizeHandle = (key: string) => (
+    <span
+      onPointerDown={(event) => startResize(event, key)}
+      onPointerMove={moveResize}
+      onPointerUp={endResize}
+      onDoubleClick={() => resetColumn(key)}
+      className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/40"
+      title="拖拽调整列宽，双击恢复自适应"
+    />
+  );
+
+  // 持久化列宽（item 2）：水合完成后跟随 colWidths 写入；水合前不写，避免空值覆盖已存偏好。
+  useEffect(() => {
+    if (!widthsHydrated.current || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("review-col-widths", JSON.stringify(colWidths));
+    } catch {
+      /* 忽略写入失败 */
+    }
+  }, [colWidths]);
+
+  // 读取该作用域「上次审核到的文档」（item 4）：作用域切换时同步重读。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = window.localStorage.getItem(`review-last-doc:${batchIdParam ?? "all"}`);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载/切换后读取持久化偏好，水合安全
+      setStoredLastId(value && value.length ? value : null);
+    } catch {
+      /* 忽略损坏的本地偏好 */
+    }
+  }, [batchIdParam]);
   // 顶部文件条：左右拖拽横向滚动。moved 标记用于区分「拖拽」与「点击选中」，避免拖动时误选文件。
   const stripRef = useRef<HTMLDivElement | null>(null);
   const stripDrag = useRef({ active: false, startX: 0, scrollLeft: 0, moved: false });
@@ -234,6 +325,24 @@ export function ReviewPage() {
   });
   const documents = useMemo(() => docList?.documents ?? [], [docList]);
 
+  // 词语联想数据源（item 1）：从资料库取商品名/单位候选，供 <datalist> 输入联想。
+  const { data: suggestData } = useQuery<{ names: string[]; units: string[]; unitByName: Record<string, string> }>({
+    queryKey: ["suggest"],
+    queryFn: () => apiGet(apiPaths.suggest),
+    staleTime: 60_000,
+  });
+  const suggestNames = suggestData?.names ?? [];
+  const suggestUnits = suggestData?.units ?? [];
+  const unitByName = useMemo(() => suggestData?.unitByName ?? {}, [suggestData]);
+
+  // 单位联想按当前行商品名给候选（task 2）：命中产品库 → 该产品单位置顶；未命中 → 用全局单位列表。
+  function unitOptionsForRow(row: ApiRow): string[] | undefined {
+    const key = String(row.name ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
+    const matched = unitByName[key];
+    if (!matched) return undefined;
+    return [matched, ...suggestUnits.filter((unit) => unit !== matched)];
+  }
+
   // 隔离模式取批次头信息（名称/审批模式）；全部模式无单一批次。
   const { data: batchDetail } = useQuery<{ batch: { id: string; name: string; approvalMode: string } }>({
     queryKey: ["batch", batchIdParam],
@@ -251,7 +360,10 @@ export function ReviewPage() {
     [documents, docSearch, docFilter],
   );
 
-  const selectedId = override ?? documents[0]?.id ?? null;
+  // item 4：无显式选择/深链时，优先回到该作用域上次审核到的文档（仍存在才用），否则第一张。
+  const fallbackDocId =
+    (storedLastId && documents.some((doc) => doc.id === storedLastId) ? storedLastId : documents[0]?.id) ?? null;
+  const selectedId = override ?? fallbackDocId;
   const selectedDoc = documents.find((doc) => doc.id === selectedId) ?? null;
   // 导航在「当前过滤列表」内迭代（全部/隔离统一）。
   const selectedIndex = filteredDocs.findIndex((doc) => doc.id === selectedId);
@@ -265,7 +377,8 @@ export function ReviewPage() {
   });
 
   const document = docData?.document;
-  const rows = document?.rows ?? [];
+  // 用 useMemo 稳定 rows 引用：避免每次渲染产生新数组，触发依赖它的 effect/useMemo 反复执行。
+  const rows = useMemo(() => document?.rows ?? [], [document]);
   const imageRegions = useMemo<ImageRegion[]>(
     () =>
       rows
@@ -296,6 +409,43 @@ export function ReviewPage() {
     setTargetRowId(null);
     rowRefs.current = {};
   }, [selectedId]);
+
+  // item 4：记住当前作用域审核到的文档，下次进入直接定位到此。
+  useEffect(() => {
+    if (typeof window === "undefined" || !selectedId) return;
+    try {
+      window.localStorage.setItem(`review-last-doc:${batchIdParam ?? "all"}`, selectedId);
+    } catch {
+      /* 忽略写入失败 */
+    }
+  }, [selectedId, batchIdParam]);
+
+  // task 1：首次打开某单据时打处理计时起点（fire-and-forget，服务端 set-once）。
+  useEffect(() => {
+    if (!selectedId || reviewStartedDocs.current.has(selectedId)) return;
+    reviewStartedDocs.current.add(selectedId);
+    apiJson(apiPaths.documentReviewStart(selectedId), { method: "POST" }).catch(() => {
+      /* 计时起点失败不影响审核 */
+    });
+  }, [selectedId]);
+
+  // item 4 行级增强：文档打开且行加载后，滚动定位到上次审核到的行并高亮（每个文档仅一次）。
+  useEffect(() => {
+    if (!selectedId || rows.length === 0 || restoredDocRef.current === selectedId) return;
+    restoredDocRef.current = selectedId;
+    let rowId: string | null = null;
+    try {
+      rowId = typeof window !== "undefined" ? window.localStorage.getItem(`review-last-row:${selectedId}`) : null;
+    } catch {
+      rowId = null;
+    }
+    if (!rowId || !rows.some((row) => row.id === rowId)) return;
+    const target = rowId;
+    requestAnimationFrame(() => {
+      rowRefs.current[target]?.scrollIntoView({ block: "center" });
+      setActiveRowId(target);
+    });
+  }, [selectedId, rows]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["document", selectedId] });
@@ -354,6 +504,7 @@ export function ReviewPage() {
   }
 
   function commitField(id: string, field: FieldDef, raw: string) {
+    rememberRow(id);
     const value = field.type === "number" ? Number(raw || 0) : raw;
     const patch = isCoreColumn(field.key) ? { [field.key]: value } : { extra: { [field.key]: value } };
     updateRow.mutate({ id, patch });
@@ -384,6 +535,16 @@ export function ReviewPage() {
     if (next) selectDoc(next.id);
   }
 
+  // 记住当前文档"审核到的行"（item 4 行级增强）：编辑/点击行时写入，下次打开滚动定位到此。
+  function rememberRow(rowId: string) {
+    if (typeof window === "undefined" || !selectedId) return;
+    try {
+      window.localStorage.setItem(`review-last-row:${selectedId}`, rowId);
+    } catch {
+      /* 忽略写入失败 */
+    }
+  }
+
   function locateRow(row: ApiRow) {
     if (!rowSourceRegion(row)) return;
     setActiveRowId(row.id);
@@ -391,6 +552,7 @@ export function ReviewPage() {
   }
 
   function clickRow(row: ApiRow, target: EventTarget | null) {
+    rememberRow(row.id);
     if (!rowSourceRegion(row)) return;
     if (target instanceof HTMLElement && target.closest("button,input,select,textarea,a")) {
       setActiveRowId(row.id);
@@ -745,18 +907,49 @@ export function ReviewPage() {
               </div>
             </PanelHeader>
             <div className="min-h-0 flex-1 overflow-auto">
+              <datalist id={SUGGEST_NAMES_ID}>
+                {suggestNames.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              <datalist id={SUGGEST_UNITS_ID}>
+                {suggestUnits.map((unit) => (
+                  <option key={unit} value={unit} />
+                ))}
+              </datalist>
               <DataTable>
                 <thead className={tableHeadClass}>
                   <tr>
                     <th className={tableCellClass}>行</th>
                     {mainFields.map((field) => (
-                      <th key={field.key} className={tableCellClass}>
+                      <th
+                        key={field.key}
+                        className={cn(tableCellClass, "relative")}
+                        style={
+                          colWidths[field.key]
+                            ? { width: colWidths[field.key], minWidth: colWidths[field.key] }
+                            : undefined
+                        }
+                      >
                         {field.label}
+                        {resizeHandle(field.key)}
                       </th>
                     ))}
                     <th className={tableCellClass}>状态</th>
                     <th className={tableCellClass}>标识类别</th>
-                    {remarkField ? <th className={tableCellClass}>{remarkField.label}</th> : null}
+                    {remarkField ? (
+                      <th
+                        className={cn(tableCellClass, "relative")}
+                        style={
+                          colWidths[remarkField.key]
+                            ? { width: colWidths[remarkField.key], minWidth: colWidths[remarkField.key] }
+                            : undefined
+                        }
+                      >
+                        {remarkField.label}
+                        {resizeHandle(remarkField.key)}
+                      </th>
+                    ) : null}
                     <th className={tableCellClass}>操作</th>
                   </tr>
                 </thead>
@@ -781,6 +974,9 @@ export function ReviewPage() {
                             align={field.align ?? (field.type === "number" ? "right" : "left")}
                             disabled={!field.editable}
                             widthClass={fieldCellWidthClass(field, true)}
+                            width={colWidths[field.key]}
+                            listId={fieldListId(field)}
+                            options={field.key === "unit" ? unitOptionsForRow(row) : undefined}
                             onCommit={(next) => commitField(row.id, field, next)}
                           />
                         ))}
@@ -802,6 +998,8 @@ export function ReviewPage() {
                             align={remarkField.align ?? (remarkField.type === "number" ? "right" : "left")}
                             disabled={!remarkField.editable}
                             widthClass={fieldCellWidthClass(remarkField)}
+                            width={colWidths[remarkField.key]}
+                            listId={fieldListId(remarkField)}
                             onCommit={(next) => commitField(row.id, remarkField, next)}
                           />
                         ) : null}
@@ -999,6 +1197,7 @@ function DraftRow({
         <input
           type={field.type === "number" ? "number" : "text"}
           step={field.type === "number" ? "any" : undefined}
+          list={field.key === "name" ? SUGGEST_NAMES_ID : field.key === "unit" ? SUGGEST_UNITS_ID : undefined}
           value={values[field.key] ?? ""}
           onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
           placeholder={field.label}

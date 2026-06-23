@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildConsensusFlags, type ComparableRow } from "../review";
+import { buildConsensusFlags, decideRowReview, type ComparableRow } from "../review";
 
 const row = (over: Partial<ComparableRow>): ComparableRow => ({
   name: "苹果",
@@ -27,5 +27,27 @@ describe("buildConsensusFlags 名称归一化", () => {
     const primary = [row({ name: "苹果", qty: 2, price: 3, amount: 6 })];
     const secondary = [row({ name: "苹果", qty: 2, price: 3, amount: 99 })];
     assert.deepEqual(buildConsensusFlags(primary, secondary), [false]);
+  });
+});
+
+describe("decideRowReview blockAuto 一票否决", () => {
+  it("blockAuto=false 时保持原有自动通过行为", () => {
+    assert.deepEqual(decideRowReview("hybrid", "low", true), { status: "confirmed", reviewClass: "ai_auto" });
+    assert.deepEqual(decideRowReview("auto", "medium", true), { status: "confirmed", reviewClass: "ai_auto" });
+  });
+
+  it("blockAuto=true（如数量为 0）任何模式都不自动通过", () => {
+    assert.deepEqual(decideRowReview("hybrid", "low", true, true), {
+      status: "needs_review",
+      reviewClass: "pending_review",
+    });
+    assert.deepEqual(decideRowReview("auto", "medium", true, true), {
+      status: "needs_review",
+      reviewClass: "pending_review",
+    });
+  });
+
+  it("高风险无视 blockAuto 仍判为冲突", () => {
+    assert.deepEqual(decideRowReview("auto", "high", true, true), { status: "conflict", reviewClass: "conflict" });
   });
 });

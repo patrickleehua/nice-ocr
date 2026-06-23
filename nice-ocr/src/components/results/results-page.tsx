@@ -13,7 +13,7 @@ import { FieldCell } from "@/components/ui/field-cell";
 import { ExportMenu } from "@/components/results/export-menu";
 import { BatchWorkspaceNav } from "@/components/batches/batch-workspace-nav";
 import { BatchScopeSelect } from "@/components/batches/batch-scope-select";
-import { DEFAULT_SCENARIO_ID, getCommonCoreFields, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
+import { DEFAULT_SCENARIO_ID, fieldCellWidthClass, getCommonCoreFields, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
@@ -132,8 +132,8 @@ export function ResultsPage() {
   const batchId = searchParams.get("batchId") ?? "";
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
-    status: "",
-    risk: "",
+    status: searchParams.get("status") ?? "",
+    risk: searchParams.get("risk") ?? "",
     audit: searchParams.get("audit") ?? "",
     name: searchParams.get("name") ?? "",
   });
@@ -398,6 +398,7 @@ export function ResultsPage() {
                       type={field.type === "number" ? "number" : "text"}
                       align={field.align ?? (field.type === "number" ? "right" : "left")}
                       disabled={!field.editable}
+                      widthClass={fieldCellWidthClass(field)}
                       onCommit={(next) => commitField(row.id, field, next)}
                     />
                   ))}

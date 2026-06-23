@@ -23,7 +23,7 @@ import {
 } from "@/lib/recognition/settings";
 import { getScenario, getScenarioFields } from "@/lib/fields/field-schema";
 import { claimNextJob } from "@/lib/queue/jobs";
-import { validateRow } from "@/lib/validation/rules";
+import { applyBrandRules, validateRow } from "@/lib/validation/rules";
 import {
   buildConsensusFlags,
   decideRowReview,
@@ -36,12 +36,30 @@ import {
   findDuplicateRowIds,
   type AuditableRow,
 } from "@/lib/recognition/audit";
+import {
+  applyLearnedCorrections,
+  buildCorrectionMap,
+  observationsFromAuditDiff,
+} from "@/lib/recognition/corrections";
 import { serializeSourceRegion } from "@/lib/recognition/source-region";
 import { createOcrLayoutProvider } from "@/lib/recognition/ocr-layout";
 import { matchRowsToLayout } from "@/lib/recognition/source-region-match";
 import type { ExtractionRow } from "@/lib/recognition/schema";
 
 const workerId = `worker-${process.pid}`;
+
+/** 安全解析 AuditLog 的 before/after JSON，仅接受普通对象，失败/非对象返回 null。 */
+function safeJsonObject(text: string | null | undefined): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 type ClaimedJob = NonNullable<Awaited<ReturnType<typeof claimNextJob>>>;
 
@@ -145,6 +163,32 @@ async function resolveSourceRegions(
   }
 }
 
+/** 名称→主导单位映射：归一化名称后取每个名称最常见的单位（task 2 单位补空）。 */
+function buildUnitByName(rows: Array<{ name: string; unit: string | null | undefined }>): Map<string, string> {
+  const counts = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const key = String(row.name ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
+    const unit = row.unit?.trim();
+    if (!key || !unit) continue;
+    const byUnit = counts.get(key) ?? new Map<string, number>();
+    byUnit.set(unit, (byUnit.get(unit) ?? 0) + 1);
+    counts.set(key, byUnit);
+  }
+  const result = new Map<string, string>();
+  for (const [key, byUnit] of counts) {
+    let best = "";
+    let bestCount = 0;
+    for (const [unit, count] of byUnit) {
+      if (count > bestCount) {
+        best = unit;
+        bestCount = count;
+      }
+    }
+    if (best) result.set(key, best);
+  }
+  return result;
+}
+
 async function extractDocument(job: ClaimedJob) {
   // 进入识别即把文档标记为「处理中」，让文件列表能区分「排队」与「正在识别」。
   await prisma.document.update({ where: { id: job.documentId }, data: { status: "processing" } });
@@ -158,21 +202,36 @@ async function extractDocument(job: ClaimedJob) {
   const prompts = resolveContextPrompts(primary.provider, defaults, promptFallback);
   const primaryProvider = createRecognitionProvider(primary, prompts, extraction);
 
-  // 第一次识别（canonical 结果，主模型）。
-  const first = await recognizePass(primaryProvider, job, imageBase64, 1, strategy);
-  const canonicalRows = first.result.extraction.rows;
+  // 双模型并行：两次识别相互独立，不必等主模型跑完再跑副模型。
+  // 是否需要一致性比对在拿到主结果前就能确定——只取决于 strategy/mode，与行内容无关：
+  // 传 hasAutoCandidate=true 做「按可能存在自动候选」预判，manual 模式与 manual/fast 策略
+  // 返回 false，其余模式返回 true。balanced+hybrid 且整页都非低风险时，副模型结果不会改变
+  // 任何判定（无低风险行就不可能 ai_auto），此前串行逻辑借此省掉该次调用；并行后改为始终
+  // 发起，用一次额外调用换取整体延迟减半，属可接受取舍。
+  // 注：此处并发的是云端模型调用（OpenAI/Anthropic SDK 天生支持并发）；本地 PaddleOCR 版面
+  // 服务的并发问题在 resolveSourceRegions 内单独处理，不受影响。
+  const runConsensus = shouldRunConsensus(strategy, mode, true);
+  const secondPass = runConsensus
+    ? recognizePass(
+        secondary.provider.id === primary.provider.id && secondary.model.id === primary.model.id
+          ? primaryProvider
+          : createRecognitionProvider(secondary, resolveContextPrompts(secondary.provider, defaults, promptFallback), extraction),
+        job,
+        imageBase64,
+        2,
+        strategy,
+      )
+    : Promise.resolve(null);
 
-  // strategy 决定是否跑第二次识别；审批模式决定一致后能否自动通过。
-  let consensusFlags = canonicalRows.map(() => false);
-  const hasAutoCandidate = mode === "auto" || canonicalRows.some((row) => validateRow(row).riskLevel === "low");
-  if (shouldRunConsensus(strategy, mode, hasAutoCandidate)) {
-    const secondaryProvider =
-      secondary.provider.id === primary.provider.id && secondary.model.id === primary.model.id
-        ? primaryProvider
-        : createRecognitionProvider(secondary, resolveContextPrompts(secondary.provider, defaults, promptFallback), extraction);
-    const second = await recognizePass(secondaryProvider, job, imageBase64, 2, strategy);
-    consensusFlags = buildConsensusFlags(canonicalRows, second.result.extraction.rows, defaults.amountTolerance);
-  }
+  // pass1 主模型（canonical 结果）与 pass2 副模型并发执行。
+  const [first, second] = await Promise.all([
+    recognizePass(primaryProvider, job, imageBase64, 1, strategy),
+    secondPass,
+  ]);
+  const canonicalRows = first.result.extraction.rows;
+  const consensusFlags = second
+    ? buildConsensusFlags(canonicalRows, second.result.extraction.rows, defaults.amountTolerance)
+    : canonicalRows.map(() => false);
 
   await prisma.recognitionRow.deleteMany({
     where: { documentId: job.documentId, status: { not: "confirmed" } },
@@ -180,12 +239,66 @@ async function extractDocument(job: ClaimedJob) {
 
   const sourceRegions = await resolveSourceRegions(job, canonicalRows, defaults);
 
+  // 历史校验基线（D#3）：导入的历史成交记录 + 系统已确认行（含单价/单位），
+  // 用于在识别阶段直接做「单价离群 / 单位与历史不一致」的多重校验并标记风险。
+  const [confirmedHistory, importedHistory] = await Promise.all([
+    prisma.recognitionRow.findMany({
+      where: { status: "confirmed", deletedAt: null },
+      select: { code: true, name: true, unit: true, qty: true, price: true, amount: true },
+    }),
+    prisma.productPriceHistory.findMany({ select: { code: true, name: true, unit: true, price: true } }),
+  ]);
+  const historyStats = buildAuditStats([
+    ...confirmedHistory,
+    ...importedHistory.map((h) => ({ code: h.code, name: h.name, unit: h.unit, qty: 0, price: h.price, amount: 0 })),
+  ]);
+
+  // 名称→主导单位（task 2「补空」）：以历史成交（已确认行 + 导入历史，即产品库基线）聚合，
+  // 识别单位为空时按产品名补全；非空不覆盖（冲突交由 UNIT_MISMATCH 标风险）。
+  const unitByName = buildUnitByName([
+    ...confirmedHistory.map((h) => ({ name: h.name, unit: h.unit })),
+    ...importedHistory.map((h) => ({ name: h.name, unit: h.unit })),
+  ]);
+
+  // 纠正记忆（item 6）：读取历史人工修正（AuditLog 字段级 diff），把重复出现的「识别值→正确值」
+  // 固化为纠正表，识别落库前自动套用。每文档查询保证能学到本次会话中刚发生的修改。
+  const correctionAudits = await prisma.auditLog.findMany({
+    where: { entityType: "RecognitionRow", action: "update" },
+    orderBy: { createdAt: "desc" },
+    take: 5000,
+    select: { beforeJson: true, afterJson: true },
+  });
+  const correctionMap = buildCorrectionMap(
+    correctionAudits.flatMap((entry) =>
+      observationsFromAuditDiff(safeJsonObject(entry.beforeJson), safeJsonObject(entry.afterJson)),
+    ),
+  );
+  let learnedCorrections = 0;
+
   let hasHighRisk = false;
   let autoApproved = 0;
   for (const [index, row] of canonicalRows.entries()) {
-    const validation = validateRow(row);
-    const decision = decideRowReview(mode, validation.riskLevel, consensusFlags[index] ?? false);
-    if (validation.riskLevel === "high") hasHighRisk = true;
+    // 先套用「纠正记忆」（item 6：你重复修正过的 OCR 错误），再套用品牌硬规则（item 3）。
+    const learned = applyLearnedCorrections(row, correctionMap);
+    if (learned.corrected.length) learnedCorrections += 1;
+    const name = applyBrandRules(learned.name);
+    // task 2「补空」：单位为空时按产品名从库补全（仅未确认行经此落库，不动已确认数据）。
+    const nameKey = name.normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
+    const unit = learned.unit && learned.unit.trim() ? learned.unit : unitByName.get(nameKey) ?? learned.unit;
+    const validation = validateRow({ code: learned.code ?? "", name, qty: row.qty, price: row.price, amount: row.amount });
+    // 历史多重校验：仅取历史相关原因（规则原因已由 validateRow 覆盖，避免重复）。
+    const historyReasons = auditRowByRules(
+      { code: validation.cleanCode, name, unit, qty: row.qty, price: row.price, amount: row.amount },
+      historyStats,
+      { priceOutlierRatio: 3, minHistory: 3 },
+    ).reasons.filter((reason) => reason === "PRICE_OUTLIER" || reason === "UNIT_MISMATCH");
+    // 合并规则原因 + 历史原因；命中历史异常即降低置信：low→medium，高风险（如非商品名）保持 high。
+    const reasons = [...validation.reasons, ...historyReasons];
+    const riskLevel =
+      validation.riskLevel === "high" ? "high" : reasons.length ? "medium" : "low";
+    // 数量为 0 一票否决自动通过（blockAuto），无论审批模式都转人工。
+    const decision = decideRowReview(mode, riskLevel, consensusFlags[index] ?? false, Number(row.qty) <= 0);
+    if (riskLevel === "high") hasHighRisk = true;
     if (decision.reviewClass === "ai_auto") autoApproved += 1;
 
     await prisma.recognitionRow.create({
@@ -197,17 +310,17 @@ async function extractDocument(job: ClaimedJob) {
         rawDate: first.result.extraction.rawDate,
         normalizedMonth: first.result.extraction.normalizedMonth,
         code: validation.cleanCode,
-        name: row.name,
-        unit: row.unit,
+        name,
+        unit,
         qty: row.qty,
         price: row.price,
         amount: row.amount,
         remark: row.remark,
         status: decision.status,
         reviewClass: decision.reviewClass,
-        riskLevel: validation.riskLevel,
-        riskReasonsJson: JSON.stringify(validation.reasons),
-        conflictState: validation.reasons.length ? "open" : "none",
+        riskLevel,
+        riskReasonsJson: JSON.stringify(reasons),
+        conflictState: reasons.length ? "open" : "none",
         sourceRegionJson: sourceRegions[index],
         // 非默认场景声明了 extra 字段时落库 extraJson；grocery 无 extra → 不写（保持默认 "{}"）。
         ...(hasExtra ? { extraJson: JSON.stringify(row.extra ?? {}) } : {}),
@@ -225,7 +338,7 @@ async function extractDocument(job: ClaimedJob) {
   });
 
   logger.info(
-    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved}`,
+    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved} learned=${learnedCorrections}`,
   );
 }
 

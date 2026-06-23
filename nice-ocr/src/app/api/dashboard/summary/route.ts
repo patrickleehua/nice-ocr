@@ -29,6 +29,7 @@ export async function GET() {
     activeBatch,
     recentFailures,
     openConflicts,
+    reviewedDocs,
   ] = await Promise.all([
     prisma.document.count(),
     prisma.recognitionJob.count({ where: { status: { in: QUEUE_STATUSES } } }),
@@ -53,7 +54,23 @@ export async function GET() {
       orderBy: [{ severity: "desc" }, { createdAt: "desc" }],
       include: { product: true },
     }),
+    // 已计时单据：起点与终点都有，用于统计人工处理时长（task 1）。
+    prisma.document.findMany({
+      where: { reviewStartedAt: { not: null }, reviewCompletedAt: { not: null } },
+      select: { reviewStartedAt: true, reviewCompletedAt: true },
+    }),
   ]);
+
+  // 人工处理时长聚合：单据时长 = 完成 - 起点；汇总总时长、单均时长、已计时单据数。
+  let totalReviewMs = 0;
+  for (const doc of reviewedDocs) {
+    if (doc.reviewStartedAt && doc.reviewCompletedAt) {
+      const ms = doc.reviewCompletedAt.getTime() - doc.reviewStartedAt.getTime();
+      if (ms > 0) totalReviewMs += ms;
+    }
+  }
+  const reviewedDocCount = reviewedDocs.length;
+  const avgReviewMs = reviewedDocCount > 0 ? Math.round(totalReviewMs / reviewedDocCount) : 0;
 
   // 按冲突类型聚合「待处理风险」。
   const riskByType = new Map<string, { type: string; reason: string; severity: string; count: number }>();
@@ -84,6 +101,8 @@ export async function GET() {
       autoApprovalRate,
       flaggedRows,
     },
+    // 人工处理计时（task 1）：总时长、单均时长（毫秒）与已计时单据数。
+    reviewTiming: { totalMs: totalReviewMs, avgMs: avgReviewMs, count: reviewedDocCount },
     activeBatch: activeBatch
       ? {
           id: activeBatch.id,

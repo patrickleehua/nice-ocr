@@ -13,6 +13,18 @@ import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RiskLevel } from "@/lib/types";
 
+/** 把毫秒格式化为简洁时长（h/m/s），0 或负值显示破折号。 */
+function formatDuration(ms: number): string {
+  if (!ms || ms <= 0) return "—";
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
+}
+
 interface DashboardSummary {
   metrics: {
     documents: number;
@@ -26,6 +38,7 @@ interface DashboardSummary {
     autoApprovalRate: number;
     flaggedRows: number;
   };
+  reviewTiming: { totalMs: number; avgMs: number; count: number };
   activeBatch: { id: string; name: string; status: string; documents: number; rows: number } | null;
   recentFailures: Array<{
     id: string;
@@ -53,16 +66,27 @@ export function DashboardPage() {
   const retryError = (retry.error as Error)?.message ?? null;
 
   const metrics = data?.metrics;
+  const reviewTiming = data?.reviewTiming;
   const processedRows = metrics ? metrics.confirmedRows + metrics.pendingRows : 0;
   const progress = processedRows > 0 ? Math.round((metrics!.confirmedRows / processedRows) * 100) : 0;
 
-  const metricCards = [
-    { label: "文档总数", value: metrics?.documents ?? 0, note: "全部批次", icon: FileImage, tone: "text-info-strong" },
-    { label: "处理排队", value: metrics?.queued ?? 0, note: "队列中", icon: Clock, tone: "text-warning-strong" },
-    { label: "失败", value: metrics?.failed ?? 0, note: "可重试", icon: AlertTriangle, tone: "text-danger-strong" },
-    { label: "待审核行", value: metrics?.pendingRows ?? 0, note: "风险优先", icon: Table2, tone: "text-warning-strong" },
-    { label: "冲突数", value: metrics?.conflicts ?? 0, note: "产品库", icon: AlertTriangle, tone: "text-danger-strong" },
-    { label: "已确认行", value: metrics?.confirmedRows ?? 0, note: "可导出", icon: CheckCircle2, tone: "text-success-strong" },
+  const metricCards: Array<{
+    label: string;
+    value: number;
+    note: string;
+    icon: typeof FileImage;
+    tone: string;
+    href: string;
+    valueText?: string;
+  }> = [
+    { label: "文档总数", value: metrics?.documents ?? 0, note: "全部批次", icon: FileImage, tone: "text-info-strong", href: "/batches" },
+    { label: "处理排队", value: metrics?.queued ?? 0, note: "队列中", icon: Clock, tone: "text-warning-strong", href: "/queue" },
+    { label: "失败", value: metrics?.failed ?? 0, note: "可重试", icon: AlertTriangle, tone: "text-danger-strong", href: "/queue?status=failed" },
+    { label: "待审核行", value: metrics?.pendingRows ?? 0, note: "风险优先", icon: Table2, tone: "text-warning-strong", href: "/review" },
+    { label: "冲突数", value: metrics?.conflicts ?? 0, note: "产品库", icon: AlertTriangle, tone: "text-danger-strong", href: "/conflicts" },
+    { label: "已确认行", value: metrics?.confirmedRows ?? 0, note: "可导出", icon: CheckCircle2, tone: "text-success-strong", href: "/results?status=confirmed" },
+    { label: "总处理时长", value: reviewTiming?.count ?? 0, valueText: formatDuration(reviewTiming?.totalMs ?? 0), note: `${formatNumber(reviewTiming?.count ?? 0)} 单已计时`, icon: Clock, tone: "text-info-strong", href: "/review" },
+    { label: "单均处理时长", value: 0, valueText: formatDuration(reviewTiming?.avgMs ?? 0), note: "每单据平均", icon: Clock, tone: "text-info-strong", href: "/review" },
   ];
 
   return (
@@ -91,16 +115,18 @@ export function DashboardPage() {
         {metricCards.map((metric) => {
           const Icon = metric.icon;
           return (
-            <Panel key={metric.label} className="p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-xs text-muted-foreground">{metric.label}</div>
-                  <div className="mt-2 text-2xl font-semibold">{isLoading ? "—" : formatNumber(metric.value)}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{metric.note}</div>
+            <Link key={metric.label} href={metric.href} className="block focus:outline-none">
+              <Panel className="p-4 transition-colors hover:border-primary hover:bg-muted/40">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs text-muted-foreground">{metric.label}</div>
+                    <div className="mt-2 text-2xl font-semibold">{isLoading ? "—" : formatNumber(metric.value)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{metric.note}</div>
+                  </div>
+                  <Icon className={metric.tone} size={19} />
                 </div>
-                <Icon className={metric.tone} size={19} />
-              </div>
-            </Panel>
+              </Panel>
+            </Link>
           );
         })}
       </div>
@@ -129,10 +155,10 @@ export function DashboardPage() {
               <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
             </div>
             <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <StatTile label="AI自动通过" value={metrics?.autoApprovedRows ?? 0} tone="text-success-strong" />
-              <StatTile label="人工确认" value={metrics?.humanConfirmedRows ?? 0} tone="text-info-strong" />
-              <StatTile label="待人工复核" value={metrics?.pendingRows ?? 0} tone="text-warning-strong" />
-              <StatTile label="待复审" value={metrics?.flaggedRows ?? 0} tone="text-danger-strong" />
+              <StatTile label="AI自动通过" value={metrics?.autoApprovedRows ?? 0} tone="text-success-strong" href="/results?status=confirmed" />
+              <StatTile label="人工确认" value={metrics?.humanConfirmedRows ?? 0} tone="text-info-strong" href="/results?status=confirmed" />
+              <StatTile label="待人工复核" value={metrics?.pendingRows ?? 0} tone="text-warning-strong" href="/review" />
+              <StatTile label="待复审" value={metrics?.flaggedRows ?? 0} tone="text-danger-strong" href="/results?audit=flagged" />
             </div>
           </div>
         </Panel>
@@ -190,7 +216,15 @@ export function DashboardPage() {
                 const retryDisabled = retry.isPending || doc.status === "queued" || doc.status === "processing";
                 return (
                   <tr key={doc.id} className="hover:bg-muted/70">
-                    <td className={tableCellClass}>{doc.fileName}</td>
+                    <td className={tableCellClass}>
+                      <Link
+                        href={`/review?batchId=${doc.batchId}&documentId=${doc.id}`}
+                        className="font-medium text-primary hover:underline"
+                        title="到审核台查看原图并复核"
+                      >
+                        {doc.fileName}
+                      </Link>
+                    </td>
                     <td className={tableCellClass}><RiskBadge risk={doc.risk} /></td>
                     <td className={tableCellClass}>
                       <ReasonList codes={doc.reasons} emptyText={doc.reasonFallback} />
@@ -217,6 +251,7 @@ export function DashboardPage() {
                   </tr>
                 );
               })
+
             ) : (
               <tr>
                 <td className={tableCellClass} colSpan={5}>
@@ -231,11 +266,14 @@ export function DashboardPage() {
   );
 }
 
-function StatTile({ label, value, tone }: { label: string; value: number; tone: string }) {
+function StatTile({ label, value, tone, href }: { label: string; value: number; tone: string; href: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface p-3">
+    <Link
+      href={href}
+      className="block rounded-md border border-border bg-surface p-3 transition-colors hover:border-primary hover:bg-muted/40"
+    >
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${tone}`}>{formatNumber(value)}</div>
-    </div>
+    </Link>
   );
 }

@@ -17,6 +17,8 @@ import {
   defaultRecognitionPrompts,
   getActiveRecognitionTarget,
   sourceRegionPromptInstruction,
+  noComputePromptInstruction,
+  rowAlignmentInstruction,
   type RecognitionTarget,
   type ProviderProtocol,
 } from "@/lib/recognition/settings";
@@ -96,6 +98,27 @@ export function ensureSourceRegionInstruction(systemPrompt: string): string {
     : `${systemPrompt}\n${sourceRegionPromptInstruction}`;
 }
 
+/**
+ * 强制注入「禁止公式计算」指令：无论提示词如何自定义，都要求模型逐字转录单据数字、
+ * 不得自行用公式计算金额/单价（否则识别错误会被「算对的金额」掩盖，AMOUNT_MISMATCH 校验也失效）。
+ * 幂等——已含该约束（如内置默认）时原样返回。
+ */
+export function ensureNoComputeInstruction(systemPrompt: string): string {
+  return systemPrompt.includes("严禁用")
+    ? systemPrompt
+    : `${systemPrompt}\n${noComputePromptInstruction}`;
+}
+
+/**
+ * 强制注入「逐行对齐」指令：缓解识别错行（多行合并/单行拆分/数值串列）。
+ * 幂等——已含「逐行转录表格」时原样返回。
+ */
+export function ensureRowAlignmentInstruction(systemPrompt: string): string {
+  return systemPrompt.includes("逐行转录表格")
+    ? systemPrompt
+    : `${systemPrompt}\n${rowAlignmentInstruction}`;
+}
+
 export function createRecognitionProvider(
   target: RecognitionTarget,
   prompts: ProviderPrompts = resolveProviderPrompts(target.provider),
@@ -104,7 +127,9 @@ export function createRecognitionProvider(
   // 所有识别 pass（主/副/审核）与 createConfiguredRecognitionProvider 都经此构造，统一在此补回坐标指令。
   const finalPrompts: ProviderPrompts = {
     ...prompts,
-    systemPrompt: ensureSourceRegionInstruction(prompts.systemPrompt),
+    systemPrompt: ensureRowAlignmentInstruction(
+      ensureNoComputeInstruction(ensureSourceRegionInstruction(prompts.systemPrompt)),
+    ),
   };
   if (target.provider.protocol === "openai_responses") {
     return new OpenAIResponsesProvider(target, finalPrompts, extraction);

@@ -45,7 +45,47 @@ export async function confirmRecognitionRows(selector: ConfirmSelector, db: DbCl
     where: { ...where, auditState: "flagged" },
     data: { auditState: "reviewed" },
   });
+
+  // 处理计时（task 1）：确认收口后，对受影响单据中「已无待确认行且已记起点」者写入完成时间。
+  let affectedDocIds: string[] = [];
+  if (selector.documentId) {
+    affectedDocIds = [String(selector.documentId)];
+  } else if (selector.rowIds && selector.rowIds.length > 0) {
+    const docs = await db.recognitionRow.findMany({
+      where: { id: { in: selector.rowIds.map(String) } },
+      select: { documentId: true },
+      distinct: ["documentId"],
+    });
+    affectedDocIds = docs.map((doc) => doc.documentId);
+  } else if (selector.batchId) {
+    const docs = await db.document.findMany({
+      where: { batchId: String(selector.batchId) },
+      select: { id: true },
+    });
+    affectedDocIds = docs.map((doc) => doc.id);
+  }
+  await stampReviewCompletion(affectedDocIds, db);
+
   return result.count;
+}
+
+/** 对已无待确认行（且已记起点、尚未记完成）的文档写入 reviewCompletedAt（task 1 处理计时终点）。 */
+async function stampReviewCompletion(documentIds: string[], db: DbClient) {
+  for (const documentId of documentIds) {
+    const pending = await db.recognitionRow.count({
+      where: { documentId, deletedAt: null, status: { not: "confirmed" } },
+    });
+    if (pending > 0) continue;
+    const total = await db.recognitionRow.count({ where: { documentId, deletedAt: null } });
+    if (total === 0) continue; // 无行的文档不计入计时
+    const doc = await db.document.findUnique({
+      where: { id: documentId },
+      select: { reviewStartedAt: true, reviewCompletedAt: true },
+    });
+    if (doc?.reviewStartedAt && !doc.reviewCompletedAt) {
+      await db.document.update({ where: { id: documentId }, data: { reviewCompletedAt: new Date() } });
+    }
+  }
 }
 
 export type RowUpdateInput = {
