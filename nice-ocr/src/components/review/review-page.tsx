@@ -53,6 +53,8 @@ interface ApiRow {
   auditNote?: string | null;
   auditSuggestionJson?: string | null;
   sourceRegionJson?: string | null;
+  /** 副模型对该行读到的商品名（与主模型不同时由接口附带），作为审核台一键候选。 */
+  altName?: string | null;
 }
 
 /** 取字段在审核行上的当前值：核心列直接取，非核心列从 extraJson 取。 */
@@ -274,17 +276,17 @@ export function ReviewPage() {
     }
   }, [colWidths]);
 
-  // 读取该作用域「上次审核到的文档」（item 4）：作用域切换时同步重读。
+  // 读取「上次审核到的文档」（item 4）。用全局键（跨作用域稳定），挂载时读取一次。
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const value = window.localStorage.getItem(`review-last-doc:${batchIdParam ?? "all"}`);
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载/切换后读取持久化偏好，水合安全
+      const value = window.localStorage.getItem("review-last-doc");
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后读取持久化偏好，水合安全
       setStoredLastId(value && value.length ? value : null);
     } catch {
       /* 忽略损坏的本地偏好 */
     }
-  }, [batchIdParam]);
+  }, []);
   // 顶部文件条：左右拖拽横向滚动。moved 标记用于区分「拖拽」与「点击选中」，避免拖动时误选文件。
   const stripRef = useRef<HTMLDivElement | null>(null);
   const stripDrag = useRef({ active: false, startX: 0, scrollLeft: 0, moved: false });
@@ -314,7 +316,19 @@ export function ReviewPage() {
     setOverride(documentIdParam);
   }
 
+  // 持久化"上次审核到的文档"（item 4，全局键）。只在用户显式选择/导航/编辑时写，
+  // 不在初次自动选中第一张时写，避免覆盖掉真正的上次位置。
+  function rememberDoc(id: string | null) {
+    if (typeof window === "undefined" || !id) return;
+    try {
+      window.localStorage.setItem("review-last-doc", id);
+    } catch {
+      /* 忽略写入失败 */
+    }
+  }
+
   function selectDoc(id: string) {
+    rememberDoc(id);
     setOverride(id);
   }
 
@@ -326,7 +340,12 @@ export function ReviewPage() {
   const documents = useMemo(() => docList?.documents ?? [], [docList]);
 
   // 词语联想数据源（item 1）：从资料库取商品名/单位候选，供 <datalist> 输入联想。
-  const { data: suggestData } = useQuery<{ names: string[]; units: string[]; unitByName: Record<string, string> }>({
+  const { data: suggestData } = useQuery<{
+    names: string[];
+    units: string[];
+    unitByName: Record<string, string>;
+    nameCorrections: Record<string, string>;
+  }>({
     queryKey: ["suggest"],
     queryFn: () => apiGet(apiPaths.suggest),
     staleTime: 60_000,
@@ -334,13 +353,31 @@ export function ReviewPage() {
   const suggestNames = suggestData?.names ?? [];
   const suggestUnits = suggestData?.units ?? [];
   const unitByName = useMemo(() => suggestData?.unitByName ?? {}, [suggestData]);
+  const nameCorrections = useMemo(() => suggestData?.nameCorrections ?? {}, [suggestData]);
+
+  const normKey = (value: string) => String(value ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
 
   // 单位联想按当前行商品名给候选（task 2）：命中产品库 → 该产品单位置顶；未命中 → 用全局单位列表。
   function unitOptionsForRow(row: ApiRow): string[] | undefined {
-    const key = String(row.name ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
-    const matched = unitByName[key];
+    const matched = unitByName[normKey(row.name)];
     if (!matched) return undefined;
     return [matched, ...suggestUnits.filter((unit) => unit !== matched)];
+  }
+
+  // 单元格一键候选小标（item 1 + 单位联想）：名称列给副模型候选 + 学到的纠正；单位列给产品库单位。
+  function cellSuggestions(row: ApiRow, field: FieldDef): string[] | undefined {
+    if (field.key === "name") {
+      const out: string[] = [];
+      if (row.altName) out.push(row.altName);
+      const corr = nameCorrections[normKey(row.name)];
+      if (corr) out.push(corr);
+      return out.length ? out : undefined;
+    }
+    if (field.key === "unit") {
+      const matched = unitByName[normKey(row.name)];
+      return matched ? [matched] : undefined;
+    }
+    return undefined;
   }
 
   // 隔离模式取批次头信息（名称/审批模式）；全部模式无单一批次。
@@ -410,15 +447,13 @@ export function ReviewPage() {
     rowRefs.current = {};
   }, [selectedId]);
 
-  // item 4：记住当前作用域审核到的文档，下次进入直接定位到此。
+  // item 4：初次定位到上次审核的文档后，把待办列表翻到它所在页，避免停在第一页看不到当前单据。
+  const pagedToResumeRef = useRef(false);
   useEffect(() => {
-    if (typeof window === "undefined" || !selectedId) return;
-    try {
-      window.localStorage.setItem(`review-last-doc:${batchIdParam ?? "all"}`, selectedId);
-    } catch {
-      /* 忽略写入失败 */
-    }
-  }, [selectedId, batchIdParam]);
+    if (pagedToResumeRef.current || selectedIndex < 0) return;
+    pagedToResumeRef.current = true;
+    setDocPage(Math.floor(selectedIndex / DOC_PAGE_SIZE) + 1);
+  }, [selectedIndex]);
 
   // task 1：首次打开某单据时打处理计时起点（fire-and-forget，服务端 set-once）。
   useEffect(() => {
@@ -538,6 +573,8 @@ export function ReviewPage() {
   // 记住当前文档"审核到的行"（item 4 行级增强）：编辑/点击行时写入，下次打开滚动定位到此。
   function rememberRow(rowId: string) {
     if (typeof window === "undefined" || !selectedId) return;
+    // 编辑/点击当前文档即视为"在审核它"，一并记住文档（即使没切换文档也能恢复到这里）。
+    rememberDoc(selectedId);
     try {
       window.localStorage.setItem(`review-last-row:${selectedId}`, rowId);
     } catch {
@@ -589,12 +626,24 @@ export function ReviewPage() {
         return;
       }
       if (typing) return;
+      // 键盘切换也记住"上次审核到的文档"（直接写，避免把组件函数引入 effect 依赖）。
+      const persist = (id: string) => {
+        try {
+          window.localStorage.setItem("review-last-doc", id);
+        } catch {
+          /* 忽略写入失败 */
+        }
+      };
       if (event.key === "ArrowLeft" && selectedIndex > 0) {
         event.preventDefault();
-        setOverride(filteredDocs[selectedIndex - 1].id);
+        const id = filteredDocs[selectedIndex - 1].id;
+        persist(id);
+        setOverride(id);
       } else if (event.key === "ArrowRight" && selectedIndex < filteredDocs.length - 1) {
         event.preventDefault();
-        setOverride(filteredDocs[selectedIndex + 1].id);
+        const id = filteredDocs[selectedIndex + 1].id;
+        persist(id);
+        setOverride(id);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -977,6 +1026,7 @@ export function ReviewPage() {
                             width={colWidths[field.key]}
                             listId={fieldListId(field)}
                             options={field.key === "unit" ? unitOptionsForRow(row) : undefined}
+                            suggestions={cellSuggestions(row, field)}
                             onCommit={(next) => commitField(row.id, field, next)}
                           />
                         ))}

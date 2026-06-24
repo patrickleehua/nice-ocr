@@ -61,12 +61,14 @@ export async function GET() {
     }),
   ]);
 
-  // 人工处理时长聚合：单据时长 = 完成 - 起点；汇总总时长、单均时长、已计时单据数。
+  // 人工处理时长聚合：单据时长 = 完成 - 起点。单据超过上限按上限计——开着单据离开/过夜会把
+  // 时长拉到几小时（如某单 1011 分钟），属空闲而非实际处理，封顶后总时长/单均才有意义。
+  const REVIEW_CAP_MS = 10 * 60 * 1000;
   let totalReviewMs = 0;
   for (const doc of reviewedDocs) {
     if (doc.reviewStartedAt && doc.reviewCompletedAt) {
       const ms = doc.reviewCompletedAt.getTime() - doc.reviewStartedAt.getTime();
-      if (ms > 0) totalReviewMs += ms;
+      if (ms > 0) totalReviewMs += Math.min(ms, REVIEW_CAP_MS);
     }
   }
   const reviewedDocCount = reviewedDocs.length;

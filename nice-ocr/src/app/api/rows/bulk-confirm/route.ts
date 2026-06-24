@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { confirmRecognitionRows } from "@/lib/workflows/rows";
+import { scheduleProductLibraryRebuild } from "@/lib/workflows/products";
 import { badRequest, handleRoute, parseJson } from "@/lib/api/http";
 
 export const runtime = "nodejs";
@@ -37,6 +38,8 @@ export async function POST(request: Request) {
     );
 
     if (updated === null) throw badRequest("Provide rowIds[], documentId or batchId");
+    // 新确认数据进入产品库基线 → 异步刷新产品库，保证后续联想/校验最新（不阻塞本次响应）。
+    if (updated > 0) scheduleProductLibraryRebuild();
     return NextResponse.json({ updated });
   });
 }

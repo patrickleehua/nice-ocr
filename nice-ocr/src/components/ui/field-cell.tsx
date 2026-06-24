@@ -21,6 +21,7 @@ export function FieldCell({
   width,
   listId,
   options,
+  suggestions,
   onCommit,
 }: {
   value: string | number | null | undefined;
@@ -35,6 +36,8 @@ export function FieldCell({
   listId?: string;
   /** 本单元格专属联想候选（优先于 listId）：用于「按产品名联想单位」这类按行变化的候选。 */
   options?: string[];
+  /** 一键采纳的候选/建议（如副模型读到的名字、按产品名联想的单位）：显示为可点按小标，点了才替换。 */
+  suggestions?: string[];
   onCommit: (next: string) => void;
 }) {
   const widthStyle = width ? { width, minWidth: width, maxWidth: width } : undefined;
@@ -43,6 +46,10 @@ export function FieldCell({
   const effectiveListId = hasOptions ? ownListId : listId;
   const raw = value == null ? "" : String(value);
   const [draft, setDraft] = useState(raw);
+  // 去重 + 去掉与当前值相同的候选，得到要展示的小标。
+  const chips = [...new Set((suggestions ?? []).map((value) => value?.trim()).filter(Boolean) as string[])].filter(
+    (value) => value !== raw.trim(),
+  );
   const focused = useRef(false);
 
   // 未聚焦时，外部值变化（乐观更新 / 后台刷新）同步到 draft；聚焦中不打断用户输入。
@@ -107,6 +114,24 @@ export function FieldCell({
           align === "right" && "text-right",
         )}
       />
+      {chips.length ? (
+        <div className="mt-0.5 flex flex-wrap gap-1">
+          {chips.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => {
+                setDraft(chip);
+                onCommit(chip);
+              }}
+              className="inline-flex max-w-full items-center gap-1 rounded bg-info/10 px-1.5 py-0.5 text-[11px] text-info-strong hover:bg-info/20"
+              title={`采纳候选：${chip}`}
+            >
+              <span className="truncate">{chip}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </td>
   );
 }

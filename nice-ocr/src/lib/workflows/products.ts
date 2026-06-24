@@ -122,3 +122,30 @@ export async function rebuildProductLibrary(
 
   return { products: productKeys.size, conflicts: conflictCount };
 }
+
+let rebuildInFlight = false;
+let rebuildQueued = false;
+
+/**
+ * 异步触发产品库重建（fire-and-forget），用于"新确认数据后自动刷新产品库"，保证联想/校验最新。
+ * 合并并发：进行中再次触发只排队一次，结束后补跑一遍，避免高频确认时反复全量重建堆积。
+ */
+export function scheduleProductLibraryRebuild() {
+  if (rebuildInFlight) {
+    rebuildQueued = true;
+    return;
+  }
+  rebuildInFlight = true;
+  void (async () => {
+    try {
+      do {
+        rebuildQueued = false;
+        await rebuildProductLibrary();
+      } while (rebuildQueued);
+    } catch (error) {
+      console.error("[products] 自动重建产品库失败:", error);
+    } finally {
+      rebuildInFlight = false;
+    }
+  })();
+}

@@ -36,30 +36,12 @@ import {
   findDuplicateRowIds,
   type AuditableRow,
 } from "@/lib/recognition/audit";
-import {
-  applyLearnedCorrections,
-  buildCorrectionMap,
-  observationsFromAuditDiff,
-} from "@/lib/recognition/corrections";
 import { serializeSourceRegion } from "@/lib/recognition/source-region";
 import { createOcrLayoutProvider } from "@/lib/recognition/ocr-layout";
 import { matchRowsToLayout } from "@/lib/recognition/source-region-match";
 import type { ExtractionRow } from "@/lib/recognition/schema";
 
 const workerId = `worker-${process.pid}`;
-
-/** 安全解析 AuditLog 的 before/after JSON，仅接受普通对象，失败/非对象返回 null。 */
-function safeJsonObject(text: string | null | undefined): Record<string, unknown> | null {
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 type ClaimedJob = NonNullable<Awaited<ReturnType<typeof claimNextJob>>>;
 
@@ -260,32 +242,15 @@ async function extractDocument(job: ClaimedJob) {
     ...importedHistory.map((h) => ({ name: h.name, unit: h.unit })),
   ]);
 
-  // 纠正记忆（item 6）：读取历史人工修正（AuditLog 字段级 diff），把重复出现的「识别值→正确值」
-  // 固化为纠正表，识别落库前自动套用。每文档查询保证能学到本次会话中刚发生的修改。
-  const correctionAudits = await prisma.auditLog.findMany({
-    where: { entityType: "RecognitionRow", action: "update" },
-    orderBy: { createdAt: "desc" },
-    take: 5000,
-    select: { beforeJson: true, afterJson: true },
-  });
-  const correctionMap = buildCorrectionMap(
-    correctionAudits.flatMap((entry) =>
-      observationsFromAuditDiff(safeJsonObject(entry.beforeJson), safeJsonObject(entry.afterJson)),
-    ),
-  );
-  let learnedCorrections = 0;
-
   let hasHighRisk = false;
   let autoApproved = 0;
   for (const [index, row] of canonicalRows.entries()) {
-    // 先套用「纠正记忆」（item 6：你重复修正过的 OCR 错误），再套用品牌硬规则（item 3）。
-    const learned = applyLearnedCorrections(row, correctionMap);
-    if (learned.corrected.length) learnedCorrections += 1;
-    const name = applyBrandRules(learned.name);
+    // 品牌硬规则（item 3）。名称纠正不再自动套用——改由审核台「建议」，避免把正确行改错。
+    const name = applyBrandRules(row.name);
     // task 2「补空」：单位为空时按产品名从库补全（仅未确认行经此落库，不动已确认数据）。
     const nameKey = name.normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
-    const unit = learned.unit && learned.unit.trim() ? learned.unit : unitByName.get(nameKey) ?? learned.unit;
-    const validation = validateRow({ code: learned.code ?? "", name, qty: row.qty, price: row.price, amount: row.amount });
+    const unit = row.unit && row.unit.trim() ? row.unit : unitByName.get(nameKey) ?? row.unit;
+    const validation = validateRow({ code: row.code ?? "", name, qty: row.qty, price: row.price, amount: row.amount });
     // 历史多重校验：仅取历史相关原因（规则原因已由 validateRow 覆盖，避免重复）。
     const historyReasons = auditRowByRules(
       { code: validation.cleanCode, name, unit, qty: row.qty, price: row.price, amount: row.amount },
@@ -338,7 +303,7 @@ async function extractDocument(job: ClaimedJob) {
   });
 
   logger.info(
-    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved} learned=${learnedCorrections}`,
+    `${workerId} done doc=${job.documentId} mode=${mode} primary=${primary.provider.providerKey}/${primary.model.modelId} secondary=${secondary.provider.providerKey}/${secondary.model.modelId} rows=${canonicalRows.length} auto=${autoApproved}`,
   );
 }
 

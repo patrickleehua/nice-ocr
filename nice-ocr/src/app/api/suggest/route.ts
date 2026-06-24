@@ -1,8 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { handleRoute } from "@/lib/api/http";
+import {
+  buildCorrectionMap,
+  normalizeCorrectionKey,
+  observationsFromAuditDiff,
+} from "@/lib/recognition/corrections";
 
 export const runtime = "nodejs";
+
+function safeJsonObject(text: string | null | undefined): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** 词语联想候选上限：商品名可能较多，单位很少；超出部分截断。 */
 const MAX_NAMES = 1000;
@@ -66,10 +81,37 @@ export async function GET() {
       if (unit && !unitFreq.has(unit)) unitFreq.set(unit, 0);
     }
 
+    // 名称纠正建议（从历史人工修改学习）：受产品库名称保护（合法商品名不当作错误），
+    // 仅供审核台一键采纳——绝不自动改库，避免"鸭爪→西瓜"这类误伤。
+    const protectedForCorrections = new Set<string>();
+    for (const product of products) {
+      const key = normalizeCorrectionKey(product.name ?? "");
+      if (key) protectedForCorrections.add(key);
+    }
+    for (const group of rowNameGroups) {
+      const key = normalizeCorrectionKey(group.name ?? "");
+      if (key) protectedForCorrections.add(key);
+    }
+    const correctionAudits = await prisma.auditLog.findMany({
+      where: { entityType: "RecognitionRow", action: "update" },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+      select: { beforeJson: true, afterJson: true },
+    });
+    const correctionMap = buildCorrectionMap(
+      correctionAudits.flatMap((entry) =>
+        observationsFromAuditDiff(safeJsonObject(entry.beforeJson), safeJsonObject(entry.afterJson)),
+      ),
+      { protectedBefore: protectedForCorrections },
+    );
+    const nameCorrections: Record<string, string> = {};
+    for (const [before, after] of correctionMap.get("name") ?? []) nameCorrections[before] = after;
+
     return NextResponse.json({
       names: rankByFrequency(nameFreq, MAX_NAMES),
       units: rankByFrequency(unitFreq),
       unitByName,
+      nameCorrections,
     });
   });
 }

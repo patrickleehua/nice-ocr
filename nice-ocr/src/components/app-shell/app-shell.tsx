@@ -54,6 +54,9 @@ const navGroups = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  // 折叠时鼠标悬停自动展开（浮层覆盖正文，不挤动布局）。expanded=有效展开态。
+  const [hovered, setHovered] = useState(false);
+  const expanded = !collapsed || hovered;
 
   // 折叠状态持久化（localStorage），初值 false 以避免 SSR/CSR 水合不一致，挂载后再同步。
   useEffect(() => {
@@ -85,33 +88,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider value={{ collapsed, setCollapsed }}>
-    <div className="flex h-screen overflow-hidden bg-app text-foreground">
+    <div className="relative flex h-screen overflow-hidden bg-app text-foreground">
+      {/* 折叠时的占位条：保持正文位置，让悬停浮层覆盖在其上而不挤动布局 */}
+      {collapsed ? <div className="hidden w-16 shrink-0 lg:block" aria-hidden /> : null}
       <aside
+        onMouseEnter={() => collapsed && setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         className={cn(
           "hidden h-screen shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 lg:flex",
-          collapsed ? "w-16" : "w-60",
+          expanded ? "w-60" : "w-16",
+          collapsed ? "absolute left-0 top-0 z-40" : "",
+          collapsed && hovered ? "shadow-xl" : "",
         )}
       >
         <div
           className={cn(
             "flex h-14 shrink-0 items-center border-b border-sidebar-border",
-            collapsed ? "justify-center px-0" : "gap-2 px-4",
+            expanded ? "gap-2 px-4" : "justify-center px-0",
           )}
         >
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
             N
           </div>
-          {!collapsed ? (
+          {expanded ? (
             <div>
               <div className="text-sm font-semibold text-foreground">nice-ocr</div>
               <div className="text-[11px] text-sidebar-muted">智能单据识别</div>
             </div>
           ) : null}
         </div>
-        <nav className={cn("space-y-5 py-4", collapsed ? "px-2" : "px-3")}>
+        <nav className={cn("space-y-5 py-4", expanded ? "px-3" : "px-2")}>
           {navGroups.map((group) => (
             <div key={group.label}>
-              {!collapsed ? (
+              {expanded ? (
                 <div className="mb-2 px-2 text-[11px] font-medium text-sidebar-muted">{group.label}</div>
               ) : (
                 <div className="mb-2 h-px bg-sidebar-border" />
@@ -125,17 +134,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       key={item.href}
                       href={item.href}
                       aria-current={active ? "page" : undefined}
-                      title={collapsed ? item.label : undefined}
+                      title={expanded ? undefined : item.label}
                       className={cn(
                         "flex h-9 items-center rounded-md text-sm transition-colors",
-                        collapsed ? "justify-center px-0" : "gap-2 px-2",
+                        expanded ? "gap-2 px-2" : "justify-center px-0",
                         active
                           ? "bg-primary/10 font-medium text-primary"
                           : "text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground",
                       )}
                     >
                       <Icon size={16} />
-                      {!collapsed ? <span>{item.label}</span> : null}
+                      {expanded ? <span>{item.label}</span> : null}
                     </Link>
                   );
                 })}
