@@ -424,12 +424,13 @@ export function ReviewPage() {
   function cellSuggestions(row: ApiRow, field: FieldDef): Array<{ value: string; hint?: string }> | undefined {
     if (field.key === "name") {
       const out: Array<{ value: string; hint?: string }> = [];
+      // 产品库匹配保留置信度%；副模型候选、历史纠正只显示候选词本身（去掉来源标签，更清爽）。
       for (const candidate of libraryCandidatesByRow.get(row.id) ?? []) {
         out.push({ value: candidate.name, hint: `${candidate.confidence}%` });
       }
-      if (row.altName) out.push({ value: row.altName, hint: "副模型" });
+      if (row.altName) out.push({ value: row.altName });
       const corr = nameCorrections[normKey(row.name)];
-      if (corr) out.push({ value: corr, hint: "历史" });
+      if (corr) out.push({ value: corr });
       return out.length ? out : undefined;
     }
     if (field.key === "unit") {
