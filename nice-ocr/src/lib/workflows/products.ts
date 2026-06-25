@@ -123,29 +123,27 @@ export async function rebuildProductLibrary(
   return { products: productKeys.size, conflicts: conflictCount };
 }
 
-let rebuildInFlight = false;
-let rebuildQueued = false;
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null;
+let rebuildRunning = false;
 
 /**
- * 异步触发产品库重建（fire-and-forget），用于"新确认数据后自动刷新产品库"，保证联想/校验最新。
- * 合并并发：进行中再次触发只排队一次，结束后补跑一遍，避免高频确认时反复全量重建堆积。
+ * 防抖触发产品库重建（fire-and-forget）：连续确认时只重置计时器，停止确认 delayMs 后才真正重建一次。
+ * 全量重建会删光产品/观测再从所有确认行重建（几千条写入），SQLite 单写锁——若每次确认都触发，
+ * 重建一直占锁会拖慢紧接着的确认/编辑请求。防抖把重建挪到"你停下来时"跑一次，确认本身不再受影响。
  */
-export function scheduleProductLibraryRebuild() {
-  if (rebuildInFlight) {
-    rebuildQueued = true;
-    return;
-  }
-  rebuildInFlight = true;
-  void (async () => {
-    try {
-      do {
-        rebuildQueued = false;
-        await rebuildProductLibrary();
-      } while (rebuildQueued);
-    } catch (error) {
-      console.error("[products] 自动重建产品库失败:", error);
-    } finally {
-      rebuildInFlight = false;
+export function scheduleProductLibraryRebuild(delayMs = 30_000) {
+  if (rebuildTimer) clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => {
+    rebuildTimer = null;
+    if (rebuildRunning) {
+      scheduleProductLibraryRebuild(5_000); // 正在重建则稍后再排，避免并发全量重建
+      return;
     }
-  })();
+    rebuildRunning = true;
+    void rebuildProductLibrary()
+      .catch((error) => console.error("[products] 自动重建产品库失败:", error))
+      .finally(() => {
+        rebuildRunning = false;
+      });
+  }, delayMs);
 }
