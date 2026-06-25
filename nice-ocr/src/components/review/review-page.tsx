@@ -20,6 +20,7 @@ import { cn, formatDateTime } from "@/lib/utils";
 import { RiskDetailDrawer } from "@/components/dialogs/action-dialogs";
 import { DEFAULT_SCENARIO_ID, fieldCellWidthClass, getScenarioFields, isCoreColumn, type FieldDef } from "@/lib/fields/field-schema";
 import { useFieldSchema } from "@/lib/fields/use-field-schema";
+import { matchLibraryCandidates, normalizeMatchKey, type NameCandidate } from "@/lib/products/match";
 import { apiGet, apiJson } from "@/lib/api/client";
 import { apiPaths } from "@/lib/api/paths";
 import type { RiskLevel, RowStatus } from "@/lib/types";
@@ -345,6 +346,7 @@ export function ReviewPage() {
     units: string[];
     unitByName: Record<string, string>;
     nameCorrections: Record<string, string>;
+    library: Array<{ name: string; unit: string | null; price: number | null }>;
   }>({
     queryKey: ["suggest"],
     queryFn: () => apiGet(apiPaths.suggest),
@@ -354,6 +356,11 @@ export function ReviewPage() {
   const suggestUnits = suggestData?.units ?? [];
   const unitByName = useMemo(() => suggestData?.unitByName ?? {}, [suggestData]);
   const nameCorrections = useMemo(() => suggestData?.nameCorrections ?? {}, [suggestData]);
+  // 产品库预归一化（一次），供模糊匹配建议复用，避免逐行重复归一。
+  const matchLibrary = useMemo(
+    () => (suggestData?.library ?? []).map((product) => ({ ...product, norm: normalizeMatchKey(product.name) })),
+    [suggestData],
+  );
 
   const normKey = (value: string) => String(value ?? "").normalize("NFKC").toLowerCase().replace(/\s+/g, "").trim();
 
@@ -362,22 +369,6 @@ export function ReviewPage() {
     const matched = unitByName[normKey(row.name)];
     if (!matched) return undefined;
     return [matched, ...suggestUnits.filter((unit) => unit !== matched)];
-  }
-
-  // 单元格一键候选小标（item 1 + 单位联想）：名称列给副模型候选 + 学到的纠正；单位列给产品库单位。
-  function cellSuggestions(row: ApiRow, field: FieldDef): string[] | undefined {
-    if (field.key === "name") {
-      const out: string[] = [];
-      if (row.altName) out.push(row.altName);
-      const corr = nameCorrections[normKey(row.name)];
-      if (corr) out.push(corr);
-      return out.length ? out : undefined;
-    }
-    if (field.key === "unit") {
-      const matched = unitByName[normKey(row.name)];
-      return matched ? [matched] : undefined;
-    }
-    return undefined;
   }
 
   // 隔离模式取批次头信息（名称/审批模式）；全部模式无单一批次。
@@ -416,6 +407,37 @@ export function ReviewPage() {
   const document = docData?.document;
   // 用 useMemo 稳定 rows 引用：避免每次渲染产生新数组，触发依赖它的 effect/useMemo 反复执行。
   const rows = useMemo(() => document?.rows ?? [], [document]);
+
+  // 产品库模糊匹配候选（带置信度）：仅对未审核行算，结果随 rows / 产品库变化缓存（前端计算，不拖慢确认）。
+  const libraryCandidatesByRow = useMemo(() => {
+    const map = new Map<string, NameCandidate[]>();
+    if (!matchLibrary.length) return map;
+    for (const row of rows) {
+      if (row.status === "confirmed") continue;
+      const candidates = matchLibraryCandidates({ name: row.name, unit: row.unit, price: row.price }, matchLibrary);
+      if (candidates.length) map.set(row.id, candidates);
+    }
+    return map;
+  }, [rows, matchLibrary]);
+
+  // 单元格一键候选小标：名称列给「产品库匹配(带置信度) + 副模型候选 + 历史纠正」；单位列给产品库单位。
+  function cellSuggestions(row: ApiRow, field: FieldDef): Array<{ value: string; hint?: string }> | undefined {
+    if (field.key === "name") {
+      const out: Array<{ value: string; hint?: string }> = [];
+      for (const candidate of libraryCandidatesByRow.get(row.id) ?? []) {
+        out.push({ value: candidate.name, hint: `${candidate.confidence}%` });
+      }
+      if (row.altName) out.push({ value: row.altName, hint: "副模型" });
+      const corr = nameCorrections[normKey(row.name)];
+      if (corr) out.push({ value: corr, hint: "历史" });
+      return out.length ? out : undefined;
+    }
+    if (field.key === "unit") {
+      const matched = unitByName[normKey(row.name)];
+      return matched ? [{ value: matched, hint: "库" }] : undefined;
+    }
+    return undefined;
+  }
   const imageRegions = useMemo<ImageRegion[]>(
     () =>
       rows

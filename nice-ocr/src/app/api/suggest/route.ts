@@ -46,8 +46,17 @@ export async function GET() {
       prisma.productObservation.groupBy({ by: ["unit"], _count: { _all: true } }),
       prisma.recognitionRow.groupBy({ by: ["name"], where: { status: "confirmed", deletedAt: null }, _count: { _all: true } }),
       prisma.recognitionRow.groupBy({ by: ["unit"], where: { status: "confirmed", deletedAt: null }, _count: { _all: true } }),
-      prisma.product.findMany({ select: { name: true, unit: true } }),
+      prisma.product.findMany({ select: { name: true, unit: true, price: true } }),
     ]);
+
+    // 产品库（名称/单位/单价）：供审核台前端做模糊匹配建议（名称相似度 + 单价/单位吻合）。
+    const library = products
+      .filter((product) => product.name?.trim())
+      .map((product) => ({
+        name: product.name.trim(),
+        unit: product.unit?.trim() || null,
+        price: product.price ?? null,
+      }));
 
     // 名称→单位映射（task 2）：以产品库为准，供审核台按当前行商品名联想单位。
     const unitByName: Record<string, string> = {};
@@ -112,6 +121,7 @@ export async function GET() {
       units: rankByFrequency(unitFreq),
       unitByName,
       nameCorrections,
+      library,
     });
   });
 }
